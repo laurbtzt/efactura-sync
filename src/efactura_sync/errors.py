@@ -1,7 +1,5 @@
 """Typed exceptions used across the package."""
 
-from __future__ import annotations
-
 
 class EfacturaError(Exception):
     """Base for all package-specific errors."""

@@ -11,15 +11,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
-      - run: uv python install ${{ matrix.python }}
+      - run: uv python install 3.14
       - run: uv sync --dev
       - run: uv run ruff check .
       - run: uv run ruff format --check .

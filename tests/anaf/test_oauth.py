@@ -1,3 +1,5 @@
+import threading
+import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -6,6 +8,7 @@ import pytest
 
 from efactura_sync.anaf.oauth import (
     Token,
+    auth_code_login,
     load_token,
     needs_refresh,
     refresh_access_token,
@@ -131,3 +134,53 @@ def test_load_token_raises_on_missing_key(tmp_path: Path) -> None:
     )
     with pytest.raises(AuthError, match="corrupt token file"):
         load_token(tmp_path, cui="12345678", env="prod")
+
+
+def test_auth_code_login_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulate the browser hitting the local callback server with a code."""
+    captured_post: dict[str, object] = {}
+
+    def post_handler(request: httpx.Request) -> httpx.Response:
+        captured_post["body"] = request.content.decode()
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "acc",
+                "refresh_token": "ref",
+                "expires_in": 7776000,
+                "token_type": "bearer",
+            },
+        )
+
+    http = httpx.Client(transport=httpx.MockTransport(post_handler))
+
+    # Stub webbrowser.open: hit the redirect_uri ourselves with a fake code.
+    def fake_open(url: str) -> bool:
+        import urllib.parse as up
+
+        q = up.parse_qs(up.urlparse(url).query)
+        redirect = q["redirect_uri"][0]
+        thread = threading.Thread(
+            target=lambda: urllib.request.urlopen(
+                f"{redirect}?code=fakecode&state={q['state'][0]}"
+            ).read()
+        )
+        thread.start()
+        return True
+
+    monkeypatch.setattr("webbrowser.open", fake_open)
+
+    now = datetime(2026, 5, 4, tzinfo=UTC)
+    token = auth_code_login(
+        http=http,
+        env="prod",
+        client_id="cid",
+        client_secret="cs",
+        cui="12345678",
+        now=now,
+    )
+    assert token.access_token == "acc"
+    assert token.cui == "12345678"
+    body = str(captured_post["body"])
+    assert "code=fakecode" in body
+    assert "grant_type=authorization_code" in body

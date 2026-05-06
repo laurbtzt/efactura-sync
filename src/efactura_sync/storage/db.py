@@ -7,7 +7,22 @@ Every public function takes a ``sqlite3.Connection`` as its first argument.
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    """Open a SQLite connection with foreign keys enabled.
+
+    SQLite's foreign-key support is connection-scoped — `PRAGMA foreign_keys = ON;`
+    must be set on each new connection, otherwise FK CASCADE silently won't fire.
+    All callers should route through this helper rather than calling
+    ``sqlite3.connect`` directly.
+    """
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS monitored_cuis (
@@ -51,6 +66,9 @@ CREATE TABLE IF NOT EXISTS synced_messages (
 CREATE INDEX IF NOT EXISTS idx_msg_cui
   ON synced_messages(cui, env);
 
+-- NOTE: The WHERE clause below MUST match find_pending_rows()'s WHERE clause
+-- (further down in this file). If they diverge, the index becomes unused and
+-- the resume-pass query falls back to a full-table scan.
 CREATE INDEX IF NOT EXISTS idx_msg_pending
   ON synced_messages(cui, env)
   WHERE zip_path IS NULL
@@ -248,6 +266,13 @@ _SELECT_COLS = (
 
 
 def insert_synced_message(conn: sqlite3.Connection, msg: SyncedMessage) -> bool:
+    """Insert a new synced-message row.
+
+    Uses ``ON CONFLICT(msg_id, cui, env) DO NOTHING`` so re-inserting the same
+    primary key is a no-op. Returns ``True`` if a new row was inserted, ``False``
+    if a row with the same ``(msg_id, cui, env)`` already existed. Callers in the
+    sync orchestrator use the return value as the dedup discriminator.
+    """
     cur = conn.execute(
         f"""
         INSERT INTO synced_messages({_SELECT_COLS})
@@ -355,6 +380,13 @@ def update_attempt(
     error: str | None,
     now: datetime,
 ) -> None:
+    """Record (or clear) a failed-attempt error for one message.
+
+    Unlike the success-marker functions (``update_zip_path``, ``mark_email_sent``,
+    etc.), this one does NOT auto-clear ``last_error``. Pass ``error="some msg"``
+    to record a transient/permanent failure for the next run's status display;
+    pass ``error=None`` explicitly to clear after a manual recovery.
+    """
     conn.execute(
         "UPDATE synced_messages SET last_attempt_at=?, last_error=? "
         "WHERE msg_id=? AND cui=? AND env=?",
@@ -368,6 +400,9 @@ def find_pending_rows(conn: sqlite3.Connection, *, cui: str, env: str) -> list[S
         f"""
         SELECT {_SELECT_COLS} FROM synced_messages
         WHERE cui=? AND env=?
+          -- NOTE: This WHERE clause MUST match idx_msg_pending's partial-index
+          -- predicate (in _SCHEMA_SQL). If they diverge, this query stops using
+          -- the index and falls back to a full-table scan.
           AND (
             zip_path IS NULL
             OR (msg_type IN ('PRIMITA','TRIMISA') AND pdf_path IS NULL)

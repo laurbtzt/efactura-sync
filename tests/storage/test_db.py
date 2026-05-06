@@ -12,6 +12,7 @@ from efactura_sync.storage.db import (
     _parse_iso,
     add_monitored_cui,
     add_tracked_counterparty,
+    connect,
     find_pending_rows,
     get_poll_state,
     get_synced_message,
@@ -305,3 +306,48 @@ def test_find_pending_rows_returns_only_unfinished(
 
     pending = {r.msg_id for r in find_pending_rows(db, cui="12345678", env="prod")}
     assert pending == {"B", "C"}
+
+
+def test_init_schema_sets_foreign_keys_pragma_on_fresh_connection(tmp_path) -> None:
+    """`init_schema` must turn FK enforcement on for the connection it receives."""
+    db_path = tmp_path / "scratch.db"
+    # Use raw sqlite3.connect (NOT our connect() helper) to prove init_schema is
+    # the one turning on the pragma, independent of the helper.
+    raw = sqlite3.connect(db_path)
+    init_schema(raw)
+    [(fk_on,)] = raw.execute("PRAGMA foreign_keys").fetchall()
+    assert fk_on == 1
+    raw.close()
+
+
+def test_connect_helper_sets_foreign_keys(tmp_path) -> None:
+    """Our connect() helper must enable foreign keys."""
+    db_path = tmp_path / "scratch2.db"
+    conn = connect(db_path)
+    [(fk_on,)] = conn.execute("PRAGMA foreign_keys").fetchall()
+    assert fk_on == 1
+    conn.close()
+
+
+def test_remove_tracked_counterparty_does_not_touch_monitored_cui(db, now_utc) -> None:
+    """Cascade is one-way: deleting a tracked row must not touch the parent."""
+    init_schema(db)
+    add_monitored_cui(db, cui="12345678", display_name="Acme", now=now_utc)
+    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
+
+    remove_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
+
+    # Monitored CUI still present.
+    cuis = list_monitored_cuis(db)
+    assert len(cuis) == 1
+    assert cuis[0].cui == "12345678"
+
+
+def test_monitored_cui_added_at_not_null(db) -> None:
+    """`added_at` is NOT NULL — proves the schema constraint is alive."""
+    init_schema(db)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO monitored_cuis(cui, display_name, added_at) VALUES (?,?,?)",
+            ("12345678", "Acme", None),
+        )

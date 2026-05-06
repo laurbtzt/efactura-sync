@@ -1,16 +1,19 @@
 """Decode listamesaje JSON and parse UBL XML invoices."""
 
 import io
+import logging
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from lxml import etree
 
 from efactura_sync.errors import InvalidArchiveError
+
+_log = logging.getLogger(__name__)
 
 NS = {
     "ubl": "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
@@ -56,6 +59,7 @@ def classify_tip(raw: str) -> MsgType:
         return "TRIMISA"
     if upper == "ERORI FACTURA":
         return "ERORI"
+    _log.warning("unknown ANAF tip, classified as MESAJ: %r", raw)
     return "MESAJ"
 
 
@@ -117,6 +121,16 @@ def extract_ubl_xml(zip_bytes: bytes) -> bytes:
     raise InvalidArchiveError("ZIP does not contain a UBL Invoice xml")
 
 
+def _parse_decimal(raw: str | None) -> Decimal | None:
+    if raw is None:
+        return None
+    try:
+        return Decimal(raw)
+    except InvalidOperation:
+        _log.warning("invalid decimal value in UBL Invoice: %r", raw)
+        return None
+
+
 def _text(root: etree._Element, xpath: str) -> str | None:
     nodes = cast(list[Any], root.xpath(xpath, namespaces=NS))
     if not nodes:
@@ -159,7 +173,7 @@ def parse_invoice_fields(ubl_xml: bytes) -> InvoiceFields:
         invoice_number=inv_no,
         issue_date=date.fromisoformat(issue_raw) if issue_raw else None,
         currency=currency,
-        payable_amount=Decimal(amount) if amount else None,
+        payable_amount=_parse_decimal(amount),
         supplier_cui=supplier_cui,
         supplier_name=supplier_name,
         customer_cui=customer_cui,

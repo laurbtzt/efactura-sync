@@ -103,3 +103,21 @@ def test_parse_invoice_fields() -> None:
         supplier_name="Furnizor X SRL",
         customer_cui="12345678",
     )
+
+
+def test_parse_invoice_fields_with_invalid_amount(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-numeric PayableAmount yields None and logs a warning."""
+    broken_xml = FIXTURE.read_bytes().replace(b"1234.56", b"NOT-A-NUMBER")
+    with caplog.at_level("WARNING", logger="efactura_sync.anaf.messages"):
+        fields = parse_invoice_fields(broken_xml)
+    assert fields.payable_amount is None
+    # Other fields still extract:
+    assert fields.invoice_number == "INV-00451"
+    assert any("invalid decimal" in r.message for r in caplog.records)
+
+
+def test_classify_tip_unknown_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("WARNING", logger="efactura_sync.anaf.messages"):
+        result = classify_tip("FACTURA STORNATA")
+    assert result == "MESAJ"
+    assert any("unknown ANAF tip" in r.message for r in caplog.records)

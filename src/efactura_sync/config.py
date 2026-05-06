@@ -1,5 +1,6 @@
 """Load and validate TOML configuration."""
 
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,10 +45,12 @@ class Config:
     def anaf_credentials(self, env: Env) -> tuple[str, str]:
         if env == "prod":
             return self.anaf.prod_client_id, self.anaf.prod_client_secret
-        return self.anaf.test_client_id, self.anaf.test_client_secret
+        if env == "test":
+            return self.anaf.test_client_id, self.anaf.test_client_secret
+        raise ConfigError(f"unknown env: {env!r}")
 
 
-def _read_toml(path: Path, label: str) -> dict[str, Any]:
+def _read_toml(path: Path, *, label: str) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"missing {label} at {path}")
     try:
@@ -58,8 +61,8 @@ def _read_toml(path: Path, label: str) -> dict[str, Any]:
 
 
 def load_config(*, config_path: Path, secrets_path: Path) -> Config:
-    cfg = _read_toml(config_path, "config.toml")
-    sec = _read_toml(secrets_path, "secrets.toml")
+    cfg = _read_toml(config_path, label="config.toml")
+    sec = _read_toml(secrets_path, label="secrets.toml")
 
     try:
         smtp_cfg = cfg["smtp"]
@@ -83,13 +86,18 @@ def load_config(*, config_path: Path, secrets_path: Path) -> Config:
 
     archive_root_raw = cfg.get("archive", {}).get("root")
     if archive_root_raw:
-        archive_root = Path(str(archive_root_raw)).expanduser()
+        expanded = os.path.expandvars(str(archive_root_raw))
+        archive_root = Path(expanded).expanduser()
     else:
         archive_root = user_data_path("efactura-sync", appauthor=False) / "archive"
 
+    port = int(smtp_cfg["port"])
+    if not (1 <= port <= 65535):
+        raise ConfigError(f"invalid smtp.port: {port} (must be 1..65535)")
+
     smtp = SmtpConfig(
         host=str(smtp_cfg["host"]),
-        port=int(smtp_cfg["port"]),
+        port=port,
         tls=tls,
         from_addr=str(smtp_cfg["from_addr"]),
         to_addr=str(smtp_cfg["to_addr"]),

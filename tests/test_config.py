@@ -232,6 +232,121 @@ def test_load_config_malformed_toml(tmp_path: Path) -> None:
         load_config(config_path=cfg_path, secrets_path=sec_path)
 
 
+def test_load_config_invalid_port(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=99999
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    with pytest.raises(ConfigError, match="port"):
+        load_config(config_path=cfg_path, secrets_path=sec_path)
+
+
+def test_load_config_archive_root_expandvars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EFACTURA_DATA", str(tmp_path / "from_env"))
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [archive]
+        root = "$EFACTURA_DATA/archive"
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    cfg = load_config(config_path=cfg_path, secrets_path=sec_path)
+    assert cfg.archive_root == tmp_path / "from_env" / "archive"
+
+
+def test_anaf_credentials_raises_on_unknown_env(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    cfg = load_config(config_path=cfg_path, secrets_path=sec_path)
+    # Bypass the type system to simulate a bad call site.
+    with pytest.raises(ConfigError, match="unknown env"):
+        cfg.anaf_credentials("nope")  # type: ignore[arg-type]
+
+
 def test_load_config_missing_secrets_file(tmp_path: Path) -> None:
     cfg_path = _write(
         tmp_path,

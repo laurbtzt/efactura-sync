@@ -6,7 +6,7 @@ Every public function takes a ``sqlite3.Connection`` as its first argument.
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS monitored_cuis (
@@ -66,7 +66,9 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def _iso(dt: datetime) -> str:
-    return dt.isoformat().replace("+00:00", "Z")
+    if dt.tzinfo is None:
+        raise ValueError("naive datetime not allowed; pass UTC-aware")
+    return dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _parse_iso(s: str) -> datetime:

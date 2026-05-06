@@ -1,10 +1,12 @@
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
 from efactura_sync.storage.db import (
     MonitoredCui,
+    _iso,
+    _parse_iso,
     add_monitored_cui,
     add_tracked_counterparty,
     init_schema,
@@ -108,3 +110,20 @@ def test_add_tracked_counterparty_requires_existing_monitored_cui(
     init_schema(db)
     with pytest.raises(sqlite3.IntegrityError):  # FK violation
         add_tracked_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
+
+
+def test_iso_rejects_naive_datetime() -> None:
+    with pytest.raises(ValueError, match="naive datetime"):
+        _iso(datetime(2026, 5, 4, 10, 0, 0))
+
+
+def test_iso_coerces_non_utc_tz_to_utc() -> None:
+    bucharest_summer = timezone(timedelta(hours=3))  # EEST
+    local = datetime(2026, 5, 4, 13, 0, 0, tzinfo=bucharest_summer)
+    # 13:00 EEST == 10:00 UTC
+    assert _iso(local) == "2026-05-04T10:00:00Z"
+
+
+def test_iso_round_trip_preserves_utc() -> None:
+    original = datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC)
+    assert _parse_iso(_iso(original)) == original

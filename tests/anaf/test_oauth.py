@@ -105,6 +105,25 @@ def test_refresh_token_400_raises_refresh_expired() -> None:
         )
 
 
+def test_refresh_token_400_other_error_raises_auth_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid_request"})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(AuthError, match="invalid_request") as exc_info:
+        refresh_access_token(
+            http=http,
+            env="prod",
+            client_id="cid",
+            client_secret="cs",
+            cui="12345678",
+            refresh_token="something",
+            now=datetime(2026, 5, 4, tzinfo=UTC),
+        )
+    # Confirm we did NOT raise the more-specific subclass:
+    assert not isinstance(exc_info.value, RefreshTokenExpired)
+
+
 def test_save_token_uses_atomic_rename(tmp_path: Path) -> None:
     """No `.partial` file should remain after a successful save."""
     save_token(tmp_path, _token())
@@ -184,3 +203,29 @@ def test_auth_code_login_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     body = str(captured_post["body"])
     assert "code=fakecode" in body
     assert "grant_type=authorization_code" in body
+
+
+def test_auth_code_login_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If no callback arrives within timeout_seconds, raise AuthError."""
+    from efactura_sync.anaf.oauth import _CallbackHandler
+
+    # Defensive reset (class attrs may have been set by another test).
+    _CallbackHandler.code = None
+    _CallbackHandler.state = None
+
+    def post_handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})  # never reached
+
+    http = httpx.Client(transport=httpx.MockTransport(post_handler))
+    monkeypatch.setattr("webbrowser.open", lambda _url: True)
+
+    with pytest.raises(AuthError, match="timed out"):
+        auth_code_login(
+            http=http,
+            env="prod",
+            client_id="cid",
+            client_secret="cs",
+            cui="12345678",
+            now=datetime(2026, 5, 4, tzinfo=UTC),
+            timeout_seconds=1,  # 1 second so the test isn't slow
+        )

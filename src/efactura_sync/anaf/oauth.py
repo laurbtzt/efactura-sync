@@ -110,7 +110,13 @@ def refresh_access_token(
         timeout=30.0,
     )
     if resp.status_code == 400:
-        raise RefreshTokenExpired(f"refresh failed (400): {resp.text[:200]}")
+        try:
+            err = (resp.json() or {}).get("error", "")
+        except Exception:
+            err = ""
+        if err == "invalid_grant":
+            raise RefreshTokenExpired(f"refresh failed (invalid_grant): {resp.text[:200]}")
+        raise AuthError(f"refresh failed (400, error={err!r}): {resp.text[:200]}")
     if resp.status_code != 200:
         raise AuthError(f"refresh failed (HTTP {resp.status_code}): {resp.text[:200]}")
     body = resp.json()
@@ -126,6 +132,13 @@ def refresh_access_token(
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
+    """One-shot HTTP handler that captures the OAuth callback.
+
+    Class-level ``code``/``state`` attributes are a single-call communication
+    channel back to ``auth_code_login``. NOT safe for concurrent invocations;
+    v1 runs synchronously from a CLI on the operator's laptop.
+    """
+
     code: str | None = None
     state: str | None = None
 
@@ -155,6 +168,7 @@ def auth_code_login(
     now: datetime,
     bind_host: str = "127.0.0.1",
     bind_port: int = 0,
+    timeout_seconds: int = 300,
 ) -> Token:
     """Run the OAuth2 authorization-code flow.
 
@@ -162,6 +176,10 @@ def auth_code_login(
     qualified digital certificate; ANAF redirects back to this short-lived
     local HTTP server with ``?code=...&state=...``. The code is exchanged for
     a token at ANAF's ``/token`` endpoint.
+
+    The local callback uses HTTP on 127.0.0.1 per RFC 8252 §7.3 (loopback
+    redirect for native apps). The OS prevents off-host traffic on loopback,
+    so cleartext is acceptable here.
 
     Must run on a host with a browser AND the cert plugged in.
     """
@@ -179,14 +197,22 @@ def auth_code_login(
         }
     )
 
-    webbrowser.open(auth_url)
+    opened = webbrowser.open(auth_url)
+    if not opened:
+        print(
+            f"Could not open the browser automatically.\n"
+            f"Open this URL manually to complete authorization:\n{auth_url}",
+            flush=True,
+        )
 
+    server.timeout = timeout_seconds
     try:
-        # serve exactly one request (the callback)
         server.handle_request()
     finally:
         server.server_close()
 
+    if _CallbackHandler.code is None and _CallbackHandler.state is None:
+        raise AuthError(f"timed out waiting for ANAF callback ({timeout_seconds}s)")
     if not _CallbackHandler.code:
         raise AuthError("no code received from ANAF callback")
     if _CallbackHandler.state != state:

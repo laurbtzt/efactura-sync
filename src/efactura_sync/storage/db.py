@@ -113,6 +113,13 @@ def list_monitored_cuis(conn: sqlite3.Connection) -> list[MonitoredCui]:
 
 
 def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
+    """Remove a monitored CUI and all rows that reference it.
+
+    `tracked_counterparties` cascades automatically via FK; `poll_state`
+    and `synced_messages` have no FK so we delete them explicitly.
+    """
+    conn.execute("DELETE FROM synced_messages WHERE cui = ?", (cui,))
+    conn.execute("DELETE FROM poll_state WHERE cui = ?", (cui,))
     conn.execute("DELETE FROM monitored_cuis WHERE cui = ?", (cui,))
     conn.commit()
 

@@ -103,6 +103,30 @@ def test_remove_monitored_cui(db: sqlite3.Connection, now_utc: datetime) -> None
     assert list_monitored_cuis(db) == []
 
 
+def test_remove_monitored_cui_also_deletes_poll_state(db, now_utc) -> None:
+    init_schema(db)
+    add_monitored_cui(db, cui="12345678", display_name=None, now=now_utc)
+    upsert_poll_state(db, cui="12345678", env="prod", last_polled_at=now_utc)
+    upsert_poll_state(db, cui="12345678", env="test", last_polled_at=now_utc)
+
+    remove_monitored_cui(db, cui="12345678")
+
+    assert get_poll_state(db, cui="12345678", env="prod") is None
+    assert get_poll_state(db, cui="12345678", env="test") is None
+
+
+def test_remove_monitored_cui_also_deletes_synced_messages(db, now_utc) -> None:
+    init_schema(db)
+    add_monitored_cui(db, cui="12345678", display_name=None, now=now_utc)
+    insert_synced_message(db, _msg(msg_id="A"))
+    insert_synced_message(db, _msg(msg_id="B"))
+
+    remove_monitored_cui(db, cui="12345678")
+
+    assert get_synced_message(db, msg_id="A", cui="12345678", env="prod") is None
+    assert get_synced_message(db, msg_id="B", cui="12345678", env="prod") is None
+
+
 def test_track_add_list_remove(db: sqlite3.Connection, now_utc: datetime) -> None:
     init_schema(db)
     add_monitored_cui(db, cui="12345678", display_name=None, now=now_utc)

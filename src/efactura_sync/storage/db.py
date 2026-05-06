@@ -5,6 +5,8 @@ Every public function takes a ``sqlite3.Connection`` as its first argument.
 """
 
 import sqlite3
+from dataclasses import dataclass
+from datetime import datetime
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS monitored_cuis (
@@ -60,4 +62,104 @@ def init_schema(conn: sqlite3.Connection) -> None:
     """Create all tables and indexes if they don't exist. Idempotent."""
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.executescript(_SCHEMA_SQL)
+    conn.commit()
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _parse_iso(s: str) -> datetime:
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s)
+
+
+@dataclass(frozen=True)
+class MonitoredCui:
+    cui: str
+    display_name: str | None
+    added_at: datetime
+
+
+def add_monitored_cui(
+    conn: sqlite3.Connection,
+    *,
+    cui: str,
+    display_name: str | None,
+    now: datetime,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO monitored_cuis(cui, display_name, added_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(cui) DO UPDATE SET
+            display_name = excluded.display_name,
+            added_at     = excluded.added_at
+        """,
+        (cui, display_name, _iso(now)),
+    )
+    conn.commit()
+
+
+def list_monitored_cuis(conn: sqlite3.Connection) -> list[MonitoredCui]:
+    rows = conn.execute(
+        "SELECT cui, display_name, added_at FROM monitored_cuis ORDER BY cui"
+    ).fetchall()
+    return [MonitoredCui(cui=r[0], display_name=r[1], added_at=_parse_iso(r[2])) for r in rows]
+
+
+def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
+    conn.execute("DELETE FROM monitored_cuis WHERE cui = ?", (cui,))
+    conn.commit()
+
+
+def add_tracked_counterparty(
+    conn: sqlite3.Connection,
+    *,
+    my_cui: str,
+    counterparty_cui: str,
+    now: datetime,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO tracked_counterparties(my_cui, counterparty_cui, added_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(my_cui, counterparty_cui) DO NOTHING
+        """,
+        (my_cui, counterparty_cui, _iso(now)),
+    )
+    conn.commit()
+
+
+def list_tracked_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT counterparty_cui
+        FROM tracked_counterparties
+        WHERE my_cui = ?
+        ORDER BY counterparty_cui
+        """,
+        (my_cui,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def is_counterparty_tracked(
+    conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
+) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        (my_cui, counterparty_cui),
+    ).fetchone()
+    return row is not None
+
+
+def remove_tracked_counterparty(
+    conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
+) -> None:
+    conn.execute(
+        "DELETE FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        (my_cui, counterparty_cui),
+    )
     conn.commit()

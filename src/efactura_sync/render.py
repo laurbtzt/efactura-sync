@@ -1,20 +1,15 @@
 """Render UBL XML to PDF via ANAF's hosted xmltopdf service."""
 
-from typing import Literal
-
 import httpx
 
-from efactura_sync import __version__
+from efactura_sync import USER_AGENT
 from efactura_sync.errors import RenderError
-
-Env = Literal["prod", "test"]
+from efactura_sync.types import Env
 
 _BASE_URLS: dict[Env, str] = {
     "prod": "https://webservicesp.anaf.ro/prod/FCTEL/rest/transformare",
     "test": "https://webservicesp.anaf.ro/test/FCTEL/rest/transformare",
 }
-
-_USER_AGENT = f"efactura-sync/{__version__}"
 
 
 class PdfRenderer:
@@ -33,7 +28,7 @@ class PdfRenderer:
             content=ubl_xml,
             headers={
                 "Content-Type": "text/plain",
-                "User-Agent": _USER_AGENT,
+                "User-Agent": USER_AGENT,
             },
             timeout=30.0,
         )

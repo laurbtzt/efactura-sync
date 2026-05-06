@@ -13,26 +13,15 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Literal
 
 import httpx
 
-from efactura_sync import __version__
+from efactura_sync import USER_AGENT
 from efactura_sync.errors import AuthError, RefreshTokenExpired
+from efactura_sync.types import Env
 
-Env = Literal["prod", "test"]
-
-_TOKEN_URLS: dict[Env, str] = {
-    "prod": "https://logincert.anaf.ro/anaf-oauth2/v1/token",
-    "test": "https://logincert.anaf.ro/anaf-oauth2/v1/token",
-}
-
-_AUTHORIZE_URLS: dict[Env, str] = {
-    "prod": "https://logincert.anaf.ro/anaf-oauth2/v1/authorize",
-    "test": "https://logincert.anaf.ro/anaf-oauth2/v1/authorize",
-}
-
-_USER_AGENT = f"efactura-sync/{__version__}"
+_TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
+_AUTHORIZE_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
 
 
 @dataclass(frozen=True)
@@ -110,14 +99,14 @@ def refresh_access_token(
     now: datetime,
 ) -> Token:
     resp = http.post(
-        _TOKEN_URLS[env],
+        _TOKEN_URL,
         data={
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
             "client_secret": client_secret,
         },
-        headers={"User-Agent": _USER_AGENT},
+        headers={"User-Agent": USER_AGENT},
         timeout=30.0,
     )
     if resp.status_code == 400:
@@ -181,7 +170,7 @@ def auth_code_login(
     actual_port = server.server_address[1]
     redirect_uri = f"http://{bind_host}:{actual_port}/callback"
 
-    auth_url = f"{_AUTHORIZE_URLS[env]}?" + urllib.parse.urlencode(
+    auth_url = f"{_AUTHORIZE_URL}?" + urllib.parse.urlencode(
         {
             "response_type": "code",
             "client_id": client_id,
@@ -207,7 +196,7 @@ def auth_code_login(
     _CallbackHandler.state = None
 
     resp = http.post(
-        _TOKEN_URLS[env],
+        _TOKEN_URL,
         data={
             "grant_type": "authorization_code",
             "code": code,
@@ -215,7 +204,7 @@ def auth_code_login(
             "client_id": client_id,
             "client_secret": client_secret,
         },
-        headers={"User-Agent": _USER_AGENT},
+        headers={"User-Agent": USER_AGENT},
         timeout=30.0,
     )
     if resp.status_code != 200:

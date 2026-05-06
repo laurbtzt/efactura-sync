@@ -1,21 +1,16 @@
 """HTTP wrapper for the read-side ANAF e-Factura endpoints."""
 
-from typing import Literal
-
 import httpx
 
-from efactura_sync import __version__
+from efactura_sync import USER_AGENT
 from efactura_sync.anaf.messages import ListMessage, parse_list_response
 from efactura_sync.errors import PermanentError, TransientError
-
-Env = Literal["prod", "test"]
+from efactura_sync.types import Env
 
 _BASE_URLS: dict[Env, str] = {
     "prod": "https://api.anaf.ro/prod/FCTEL/rest",
     "test": "https://api.anaf.ro/test/FCTEL/rest",
 }
-
-_USER_AGENT = f"efactura-sync/{__version__}"
 
 
 def _classify(response: httpx.Response) -> None:
@@ -42,7 +37,7 @@ class AnafClient:
     def _headers(self, access_token: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {access_token}",
-            "User-Agent": _USER_AGENT,
+            "User-Agent": USER_AGENT,
         }
 
     def list_messages(self, *, cif: str, zile: int, access_token: str) -> list[ListMessage]:

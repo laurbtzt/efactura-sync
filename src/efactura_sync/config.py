@@ -8,9 +8,9 @@ from typing import Any, Literal, cast
 from platformdirs import user_data_path
 
 from efactura_sync.errors import ConfigError
+from efactura_sync.types import Env
 
 TlsMode = Literal["implicit", "starttls"]
-Env = Literal["prod", "test"]
 
 
 @dataclass(frozen=True)

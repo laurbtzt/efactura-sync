@@ -4,17 +4,18 @@ from typing import Literal
 
 import httpx
 
+from efactura_sync import __version__
 from efactura_sync.anaf.messages import ListMessage, parse_list_response
 from efactura_sync.errors import PermanentError, TransientError
 
 Env = Literal["prod", "test"]
 
-_BASE_URLS: dict[str, str] = {
+_BASE_URLS: dict[Env, str] = {
     "prod": "https://api.anaf.ro/prod/FCTEL/rest",
     "test": "https://api.anaf.ro/test/FCTEL/rest",
 }
 
-_USER_AGENT = "efactura-sync/0.1.0"
+_USER_AGENT = f"efactura-sync/{__version__}"
 
 
 def _classify(response: httpx.Response) -> None:

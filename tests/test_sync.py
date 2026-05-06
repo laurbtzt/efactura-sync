@@ -1,0 +1,236 @@
+import io
+import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+from zipfile import ZipFile
+
+import pytest
+
+from efactura_sync.anaf.messages import ListMessage
+from efactura_sync.errors import RenderError
+from efactura_sync.storage.db import (
+    add_monitored_cui,
+    add_tracked_counterparty,
+    get_synced_message,
+    init_schema,
+)
+from efactura_sync.storage.files import FileStore
+from efactura_sync.sync import SyncDeps, process_one_message
+
+# --- fakes ----------------------------------------------------------------
+
+
+class FakeAnaf:
+    def __init__(
+        self,
+        *,
+        list_response: list[ListMessage] | None = None,
+        download_payload: bytes | None = None,
+    ) -> None:
+        self.list_response = list_response or []
+        self.download_payload = download_payload or b""
+        self.list_calls: list[tuple[str, int]] = []
+        self.download_calls: list[str] = []
+
+    def list_messages(self, *, cif: str, zile: int, access_token: str) -> list[ListMessage]:
+        self.list_calls.append((cif, zile))
+        return self.list_response
+
+    def download(self, *, msg_id: str, access_token: str) -> bytes:
+        self.download_calls.append(msg_id)
+        return self.download_payload
+
+
+class FakeRenderer:
+    def __init__(self, *, fail: bool = False, output: bytes = b"%PDF-fake") -> None:
+        self.fail = fail
+        self.output = output
+        self.calls: list[bytes] = []
+
+    def render(self, *, ubl_xml: bytes, standard: str = "FACT1") -> bytes:
+        self.calls.append(ubl_xml)
+        if self.fail:
+            raise RenderError("boom")
+        return self.output
+
+
+# --- fixtures -------------------------------------------------------------
+
+
+@pytest.fixture
+def deps(db: sqlite3.Connection, archive_root: Path) -> SyncDeps:
+    init_schema(db)
+    return SyncDeps(
+        anaf=FakeAnaf(),
+        renderer=FakeRenderer(),
+        files=FileStore(),
+        db=db,
+        archive_root=archive_root,
+    )
+
+
+# --- helpers --------------------------------------------------------------
+
+
+UBL_FIXTURE = (Path(__file__).parent / "fixtures" / "ubl" / "primita_minimal.xml").read_bytes()
+
+
+def _make_zip(xml_bytes: bytes) -> bytes:
+    buf = io.BytesIO()
+    with ZipFile(buf, "w") as zf:
+        zf.writestr("invoice.xml", xml_bytes)
+    return buf.getvalue()
+
+
+def _list_msg(**overrides: Any) -> ListMessage:
+    base = ListMessage(
+        msg_id="3001",
+        cif="12345678",
+        data_creare_utc=datetime(2026, 5, 4, 8, 30, tzinfo=UTC),
+        tip_raw="FACTURA PRIMITA",
+        tip="PRIMITA",
+        detalii="ok",
+    )
+    return ListMessage(**{**base.__dict__, **overrides})
+
+
+# --- tests ----------------------------------------------------------------
+
+
+def test_primita_tracked_supplier_archives_and_marks_pending(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name="Acme", now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert row.pdf_path is not None
+    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_sent_at is None
+
+
+def test_primita_untracked_supplier_archives_but_filters_email(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    # NOTE: no tracked counterparty added.
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_sent_at is None
+
+
+def test_trimisa_archives_renders_pdf_and_marks_never_email(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(tip_raw="FACTURA TRIMISA", tip="TRIMISA"),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert row.pdf_path is not None
+    assert row.email_skip_reason == "never_email_for_type"
+
+
+def test_erori_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf.download_payload = b"PKfake"  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(tip_raw="ERORI FACTURA", tip="ERORI"),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert "messages/" in row.zip_path
+    assert row.pdf_path is None
+    assert row.email_skip_reason == "mail_pending_v1"
+
+
+def test_mesaj_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf.download_payload = b"PKfake"  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(tip_raw="MESAJ_CUMPARATOR", tip="MESAJ"),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert row.pdf_path is None
+    assert row.email_skip_reason == "mail_pending_v1"
+
+
+def test_pdf_render_failure_records_error_and_marks_pending(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    deps.renderer = FakeRenderer(fail=True)  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert row.pdf_path is None
+    assert row.last_error is not None and "boom" in row.last_error
+    # Email decision was deferred because the row is still pending render. We do
+    # NOT mark email_skip_reason here — the resume pass will retry render, and
+    # after a successful render the email step will mark the row pending.
+    assert row.email_skip_reason is None
+    assert row.email_sent_at is None

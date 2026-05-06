@@ -18,6 +18,12 @@ NS = {
     "cbc": "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2",
 }
 
+# Hardened XML parser: never resolve external entities, never fetch network
+# resources, never accept multi-gigabyte trees. Used for both ZIP-extracted
+# UBL XML and signed-supplier UBL XML. ANAF signs the ZIP, but the XML inside
+# is authored by the *supplier* — treat it as untrusted input.
+_PARSER = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=False)
+
 MsgType = Literal["PRIMITA", "TRIMISA", "ERORI", "MESAJ"]
 
 
@@ -57,6 +63,13 @@ def _parse_data_creare(raw: str) -> datetime:
     """ANAF returns YYYYMMDDHHMM in Europe/Bucharest local time.
 
     We convert to UTC. Bucharest is UTC+2 in winter, UTC+3 in summer (DST).
+
+    Note on DST autumn-ambiguity: on the last Sunday of October the local
+    clock 03:00–04:00 occurs twice. ``naive.replace(tzinfo=...)`` picks
+    ``fold=0`` (the first occurrence, EEST = +03:00) — i.e. the pre-DST
+    instant. Acceptable since ANAF data_creare resolution is per-minute and
+    the at-most off-by-one-hour skew only affects timestamps emitted in the
+    one-hour overlap window, once per year.
     """
     naive = datetime.strptime(raw, "%Y%m%d%H%M")
     local = naive.replace(tzinfo=ZoneInfo("Europe/Bucharest"))
@@ -96,7 +109,7 @@ def extract_ubl_xml(zip_bytes: bytes) -> bytes:
                 continue
             data = zf.read(name)
             try:
-                root = etree.fromstring(data)
+                root = etree.fromstring(data, _PARSER)
             except etree.XMLSyntaxError:
                 continue
             if root.tag == f"{{{NS['ubl']}}}Invoice":
@@ -117,7 +130,7 @@ def _text(root: etree._Element, xpath: str) -> str | None:
 
 def parse_invoice_fields(ubl_xml: bytes) -> InvoiceFields:
     try:
-        root = etree.fromstring(ubl_xml)
+        root = etree.fromstring(ubl_xml, _PARSER)
     except etree.XMLSyntaxError as e:
         raise InvalidArchiveError(f"invalid UBL XML: {e}") from e
 

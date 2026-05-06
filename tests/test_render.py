@@ -39,3 +39,19 @@ def test_render_5xx_raises_render_error() -> None:
     renderer = PdfRenderer(http=httpx.Client(transport=httpx.MockTransport(handler)))
     with pytest.raises(RenderError):
         renderer.render(ubl_xml=b"<Invoice/>")
+
+
+def test_render_uses_test_env_url() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        return httpx.Response(200, content=b"%PDF-1.7 fake")
+
+    renderer = PdfRenderer(
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
+        env="test",
+    )
+    renderer.render(ubl_xml=b"<Invoice/>")
+
+    assert "/test/FCTEL/rest/transformare/" in str(captured["url"])

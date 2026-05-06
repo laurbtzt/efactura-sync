@@ -5,16 +5,19 @@ import pytest
 
 from efactura_sync.storage.db import (
     MonitoredCui,
+    PollState,
     _iso,
     _parse_iso,
     add_monitored_cui,
     add_tracked_counterparty,
+    get_poll_state,
     init_schema,
     is_counterparty_tracked,
     list_monitored_cuis,
     list_tracked_counterparties,
     remove_monitored_cui,
     remove_tracked_counterparty,
+    upsert_poll_state,
 )
 
 
@@ -127,3 +130,30 @@ def test_iso_coerces_non_utc_tz_to_utc() -> None:
 def test_iso_round_trip_preserves_utc() -> None:
     original = datetime(2026, 5, 4, 10, 0, 0, tzinfo=UTC)
     assert _parse_iso(_iso(original)) == original
+
+
+def test_get_poll_state_missing_returns_none(db: sqlite3.Connection) -> None:
+    init_schema(db)
+    assert get_poll_state(db, cui="12345678", env="prod") is None
+
+
+def test_upsert_poll_state_inserts_then_updates(db: sqlite3.Connection, now_utc: datetime) -> None:
+    init_schema(db)
+    upsert_poll_state(db, cui="12345678", env="prod", last_polled_at=now_utc)
+
+    state = get_poll_state(db, cui="12345678", env="prod")
+    assert state == PollState(cui="12345678", env="prod", last_polled_at=now_utc)
+
+    later = now_utc.replace(day=5)
+    upsert_poll_state(db, cui="12345678", env="prod", last_polled_at=later)
+    state2 = get_poll_state(db, cui="12345678", env="prod")
+    assert state2 is not None
+    assert state2.last_polled_at == later
+
+
+def test_poll_state_is_keyed_by_cui_and_env(db: sqlite3.Connection, now_utc: datetime) -> None:
+    init_schema(db)
+    upsert_poll_state(db, cui="12345678", env="prod", last_polled_at=now_utc)
+    upsert_poll_state(db, cui="12345678", env="test", last_polled_at=now_utc)
+    assert get_poll_state(db, cui="12345678", env="prod") is not None
+    assert get_poll_state(db, cui="12345678", env="test") is not None

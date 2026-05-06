@@ -165,3 +165,33 @@ def remove_tracked_counterparty(
         (my_cui, counterparty_cui),
     )
     conn.commit()
+
+
+@dataclass(frozen=True)
+class PollState:
+    cui: str
+    env: str
+    last_polled_at: datetime
+
+
+def get_poll_state(conn: sqlite3.Connection, *, cui: str, env: str) -> PollState | None:
+    row = conn.execute(
+        "SELECT cui, env, last_polled_at FROM poll_state WHERE cui = ? AND env = ?",
+        (cui, env),
+    ).fetchone()
+    if row is None:
+        return None
+    return PollState(cui=row[0], env=row[1], last_polled_at=_parse_iso(row[2]))
+
+
+def upsert_poll_state(
+    conn: sqlite3.Connection, *, cui: str, env: str, last_polled_at: datetime
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO poll_state(cui, env, last_polled_at) VALUES (?, ?, ?)
+        ON CONFLICT(cui, env) DO UPDATE SET last_polled_at = excluded.last_polled_at
+        """,
+        (cui, env, _iso(last_polled_at)),
+    )
+    conn.commit()

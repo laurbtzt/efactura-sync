@@ -66,3 +66,12 @@ def test_4xx_raises_permanent() -> None:
     client = _client(httpx.MockTransport(handler))
     with pytest.raises(PermanentError):
         client.download(msg_id="3001", access_token="tok")
+
+
+def test_list_messages_rejects_non_dict_payload() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"])
+
+    client = _client(httpx.MockTransport(handler))
+    with pytest.raises(PermanentError, match="non-dict payload"):
+        client.list_messages(cif="12345678", zile=1, access_token="tok")

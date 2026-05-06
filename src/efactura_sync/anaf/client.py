@@ -13,6 +13,9 @@ _BASE_URLS: dict[Env, str] = {
 }
 
 
+# TODO(retry-loop): honor Retry-After when implementing the §7.5 retry schedule
+#   (`[1s, 5s, 30s, 5m]`). Currently we raise once and rely on the daily cron
+#   to retry tomorrow.
 def _classify(response: httpx.Response) -> None:
     """Raise TransientError for 5xx/429, PermanentError for 4xx."""
     if response.status_code == 429 or 500 <= response.status_code < 600:
@@ -30,6 +33,13 @@ def _classify(response: httpx.Response) -> None:
 
 
 class AnafClient:
+    """HTTP client for ANAF's read-side e-Factura endpoints.
+
+    Caller owns the lifecycle of ``http``; close it via ``with httpx.Client() as ...``.
+    Use one shared ``httpx.Client`` for both this class and ``PdfRenderer`` so a
+    single connection pool serves all ANAF traffic.
+    """
+
     def __init__(self, http: httpx.Client, env: Env) -> None:
         self._http = http
         self._base = _BASE_URLS[env]
@@ -49,7 +59,14 @@ class AnafClient:
             timeout=30.0,
         )
         _classify(resp)
-        return parse_list_response(resp.json())
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            raise PermanentError(
+                "listamesaje returned non-dict payload",
+                status=resp.status_code,
+                body=resp.content,
+            )
+        return parse_list_response(payload)
 
     def download(self, *, msg_id: str, access_token: str) -> bytes:
         resp = self._http.get(

@@ -326,6 +326,42 @@ def update_zip_path(
     conn.commit()
 
 
+def finalize_zip_write(
+    conn: sqlite3.Connection,
+    *,
+    msg_id: str,
+    cui: str,
+    env: str,
+    zip_path: str,
+    counterparty_cui: str | None,
+    issue_date: date | None,
+    now: datetime,
+) -> None:
+    """Mark the ZIP-write step done AND backfill metadata learned from parsing.
+
+    Called from the orchestrator's step 4 after the ZIP has been atomically
+    written to disk. Sets ``zip_path``, ``counterparty_cui``, ``issue_date``,
+    refreshes ``last_attempt_at``, and clears ``last_error``. All in one
+    transaction, so a partial state never reaches the next run.
+    """
+    conn.execute(
+        "UPDATE synced_messages "
+        "SET zip_path=?, counterparty_cui=?, issue_date=?, "
+        "    last_attempt_at=?, last_error=NULL "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (
+            zip_path,
+            counterparty_cui,
+            issue_date.isoformat() if issue_date else None,
+            _iso(now),
+            msg_id,
+            cui,
+            env,
+        ),
+    )
+    conn.commit()
+
+
 def update_pdf_path(
     conn: sqlite3.Connection,
     *,

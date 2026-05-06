@@ -343,6 +343,32 @@ def test_remove_tracked_counterparty_does_not_touch_monitored_cui(db, now_utc) -
     assert cuis[0].cui == "12345678"
 
 
+def test_finalize_zip_write_sets_all_fields(db, now_utc: datetime) -> None:
+    init_schema(db)
+    insert_synced_message(db, _msg(zip_path=None, counterparty_cui=None, issue_date=None))
+
+    from efactura_sync.storage.db import finalize_zip_write
+
+    finalize_zip_write(
+        db,
+        msg_id="3001",
+        cui="12345678",
+        env="prod",
+        zip_path="rel/zip.zip",
+        counterparty_cui="RO111",
+        issue_date=date(2026, 5, 4),
+        now=now_utc,
+    )
+
+    row = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path == "rel/zip.zip"
+    assert row.counterparty_cui == "RO111"
+    assert row.issue_date == date(2026, 5, 4)
+    assert row.last_attempt_at == now_utc
+    assert row.last_error is None
+
+
 def test_monitored_cui_added_at_not_null(db) -> None:
     """`added_at` is NOT NULL — proves the schema constraint is alive."""
     init_schema(db)

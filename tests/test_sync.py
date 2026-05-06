@@ -234,3 +234,116 @@ def test_pdf_render_failure_records_error_and_marks_pending(
     # after a successful render the email step will mark the row pending.
     assert row.email_skip_reason is None
     assert row.email_sent_at is None
+
+
+def test_process_one_message_is_idempotent_on_reentry(deps: SyncDeps, now_utc: datetime) -> None:
+    """Calling twice with the same list_msg downloads + emails-decides only once."""
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+    # Second invocation must not re-download or change email decision.
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    assert deps.anaf.download_calls == ["3001"]  # type: ignore[attr-defined]
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.email_skip_reason == "mail_pending_v1"
+
+
+def test_process_one_message_parse_failure_records_error(deps: SyncDeps, now_utc: datetime) -> None:
+    """A ZIP that contains no UBL Invoice yields InvalidArchiveError -> last_error set."""
+    # ZIP with only a non-UBL file inside.
+    bad_zip = _make_zip(b"<not-an-invoice/>")
+    deps.anaf.download_payload = bad_zip  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is None  # not written because parse failed
+    assert row.last_error is not None and "parse:" in row.last_error
+    assert row.email_skip_reason is None  # not decided yet
+
+
+def test_process_one_message_download_failure_records_error(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    """A download error sets last_error and leaves the row pending."""
+    from efactura_sync.errors import TransientError
+
+    class FailingAnaf(FakeAnaf):
+        def download(self, *, msg_id: str, access_token: str) -> bytes:
+            self.download_calls.append(msg_id)
+            raise TransientError("network blip", status=503, body=b"")
+
+    deps.anaf = FailingAnaf()  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is None
+    assert row.last_error is not None and "download:" in row.last_error
+    assert row.email_skip_reason is None
+
+
+def test_primita_with_null_counterparty_marks_pending_not_filtered(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    """A PRIMITA whose UBL has no supplier CUI must NOT be filtered as untracked."""
+    # Build a UBL fixture with the supplier CompanyID stripped out.
+    no_supplier_xml = UBL_FIXTURE.replace(
+        b"<cbc:CompanyID>RO87654321</cbc:CompanyID>", b""
+    ).replace(
+        b"<cbc:RegistrationName>Furnizor X SRL</cbc:RegistrationName>",
+        b"<cbc:RegistrationName>Furnizor X SRL</cbc:RegistrationName>",
+    )
+    deps.anaf.download_payload = _make_zip(no_supplier_xml)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    # supplier_cui couldn't be parsed -> defensive default is mail_pending_v1, not filtered.
+    assert row.counterparty_cui is None
+    assert row.email_skip_reason == "mail_pending_v1"

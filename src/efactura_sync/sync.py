@@ -14,10 +14,11 @@ values without actually sending email. Rows that "would email" are tagged
 ``mail_pending_v1`` so a future task can backfill them.
 """
 
+import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from efactura_sync.anaf.messages import (
@@ -52,7 +53,7 @@ class SyncDeps:
     anaf: _AnafLike
     renderer: _RendererLike
     files: FileStore
-    db: Any  # sqlite3.Connection
+    db: sqlite3.Connection
     archive_root: Path
 
 
@@ -183,7 +184,6 @@ def process_one_message(
     # 4. write ZIP to disk + record metadata
     if row.zip_path is None:
         if list_msg.tip in ("PRIMITA", "TRIMISA"):
-            assert list_msg.tip in ("PRIMITA", "TRIMISA")
             invoice_type: Literal["PRIMITA", "TRIMISA"] = list_msg.tip
             zip_target = invoice_zip_path(
                 archive_root=deps.archive_root,
@@ -203,22 +203,16 @@ def process_one_message(
         rel_zip = str(zip_target.relative_to(deps.archive_root))
         # Backfill issue_date + counterparty_cui (we only learned them after
         # parsing the XML).
-        deps.db.execute(
-            "UPDATE synced_messages "
-            "SET zip_path=?, counterparty_cui=?, issue_date=?, "
-            "    last_attempt_at=?, last_error=NULL "
-            "WHERE msg_id=? AND cui=? AND env=?",
-            (
-                rel_zip,
-                counterparty_cui,
-                (partition_date.isoformat() if list_msg.tip in ("PRIMITA", "TRIMISA") else None),
-                now.isoformat().replace("+00:00", "Z"),
-                list_msg.msg_id,
-                my_cui,
-                env,
-            ),
+        dbq.finalize_zip_write(
+            deps.db,
+            msg_id=list_msg.msg_id,
+            cui=my_cui,
+            env=env,
+            zip_path=rel_zip,
+            counterparty_cui=counterparty_cui,
+            issue_date=(partition_date if list_msg.tip in ("PRIMITA", "TRIMISA") else None),
+            now=now,
         )
-        deps.db.commit()
         row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
         assert row is not None
 
@@ -227,7 +221,6 @@ def process_one_message(
         try:
             assert ubl_xml is not None
             pdf_bytes = deps.renderer.render(ubl_xml=ubl_xml)
-            assert list_msg.tip in ("PRIMITA", "TRIMISA")
             invoice_type2: Literal["PRIMITA", "TRIMISA"] = list_msg.tip
             pdf_target = invoice_pdf_path(
                 archive_root=deps.archive_root,
@@ -255,6 +248,9 @@ def process_one_message(
                 error=f"render: {e}",
                 now=now,
             )
+            # TODO(mail-revisit): when mail.py lands, spec §6.3 says PRIMITA should
+            # still email with ZIP-only on RenderError. Today (mail deferred) we
+            # return early so the row stays pending and the next run retries render.
             return  # don't mark email step until render succeeds
 
     # 6. email decision (mail deferred; record skip reason)

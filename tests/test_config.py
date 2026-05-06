@@ -139,3 +139,115 @@ def test_load_config_invalid_tls(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="tls"):
         load_config(config_path=cfg_path, secrets_path=sec_path)
+
+
+def test_load_config_invalid_default_env(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="staging"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    with pytest.raises(ConfigError, match="default_env"):
+        load_config(config_path=cfg_path, secrets_path=sec_path)
+
+
+def test_load_config_missing_required_section(tmp_path: Path) -> None:
+    # secrets.toml is missing [anaf.test]
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    with pytest.raises(ConfigError, match="missing"):
+        load_config(config_path=cfg_path, secrets_path=sec_path)
+
+
+def test_load_config_malformed_toml(tmp_path: Path) -> None:
+    cfg_path = _write(tmp_path, "config.toml", 'host = "unclosed\n')
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    with pytest.raises(ConfigError, match="invalid TOML"):
+        load_config(config_path=cfg_path, secrets_path=sec_path)
+
+
+def test_load_config_missing_secrets_file(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    with pytest.raises(ConfigError, match="secrets.toml"):
+        load_config(config_path=cfg_path, secrets_path=tmp_path / "missing-secrets.toml")

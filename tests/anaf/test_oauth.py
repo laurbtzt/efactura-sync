@@ -11,7 +11,7 @@ from efactura_sync.anaf.oauth import (
     refresh_access_token,
     save_token,
 )
-from efactura_sync.errors import RefreshTokenExpired
+from efactura_sync.errors import AuthError, RefreshTokenExpired
 
 
 def _token(**overrides: object) -> Token:
@@ -100,3 +100,34 @@ def test_refresh_token_400_raises_refresh_expired() -> None:
             refresh_token="dead",
             now=datetime(2026, 5, 4, tzinfo=UTC),
         )
+
+
+def test_save_token_uses_atomic_rename(tmp_path: Path) -> None:
+    """No `.partial` file should remain after a successful save."""
+    save_token(tmp_path, _token())
+    assert (tmp_path / "12345678.prod.json").exists()
+    assert not (tmp_path / "12345678.prod.json.partial").exists()
+
+
+def test_load_token_raises_on_invalid_env(tmp_path: Path) -> None:
+    p = tmp_path / "12345678.prod.json"
+    p.write_text(
+        '{"cui":"12345678","env":"prod-fake","access_token":"a",'
+        '"refresh_token":"r","expires_at":"2026-08-01T00:00:00Z",'
+        '"obtained_at":"2026-05-04T00:00:00Z"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(AuthError, match="invalid env"):
+        load_token(tmp_path, cui="12345678", env="prod")
+
+
+def test_load_token_raises_on_missing_key(tmp_path: Path) -> None:
+    p = tmp_path / "12345678.prod.json"
+    # Missing 'access_token' — invalid token file.
+    p.write_text(
+        '{"cui":"12345678","env":"prod","refresh_token":"r",'
+        '"expires_at":"2026-08-01T00:00:00Z","obtained_at":"2026-05-04T00:00:00Z"}',
+        encoding="utf-8",
+    )
+    with pytest.raises(AuthError, match="corrupt token file"):
+        load_token(tmp_path, cui="12345678", env="prod")

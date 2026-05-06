@@ -48,12 +48,14 @@ def save_token(tokens_dir: Path, token: Token) -> None:
         "expires_at": token.expires_at.isoformat().replace("+00:00", "Z"),
         "obtained_at": token.obtained_at.isoformat().replace("+00:00", "Z"),
     }
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    partial = p.with_name(p.name + ".partial")
+    fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, json.dumps(payload, indent=2).encode("utf-8"))
         os.fsync(fd)
     finally:
         os.close(fd)
+    os.replace(partial, p)
     os.chmod(p, 0o600)
 
 
@@ -68,14 +70,20 @@ def load_token(tokens_dir: Path, *, cui: str, env: str) -> Token:
             s = s[:-1] + "+00:00"
         return datetime.fromisoformat(s)
 
-    return Token(
-        cui=raw["cui"],
-        env=raw["env"],
-        access_token=raw["access_token"],
-        refresh_token=raw["refresh_token"],
-        expires_at=_parse(raw["expires_at"]),
-        obtained_at=_parse(raw["obtained_at"]),
-    )
+    try:
+        env_value = raw["env"]
+        if env_value not in ("prod", "test"):
+            raise AuthError(f"invalid env in token file: {env_value!r}")
+        return Token(
+            cui=raw["cui"],
+            env=env_value,
+            access_token=raw["access_token"],
+            refresh_token=raw["refresh_token"],
+            expires_at=_parse(raw["expires_at"]),
+            obtained_at=_parse(raw["obtained_at"]),
+        )
+    except KeyError as e:
+        raise AuthError(f"corrupt token file (missing {e}): {p}") from e
 
 
 def needs_refresh(token: Token, *, now: datetime, buffer_days: int = 7) -> bool:

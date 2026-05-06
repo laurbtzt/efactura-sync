@@ -1,22 +1,32 @@
 import sqlite3
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
 from efactura_sync.storage.db import (
     MonitoredCui,
     PollState,
+    SyncedMessage,
     _iso,
     _parse_iso,
     add_monitored_cui,
     add_tracked_counterparty,
+    find_pending_rows,
     get_poll_state,
+    get_synced_message,
     init_schema,
+    insert_synced_message,
     is_counterparty_tracked,
     list_monitored_cuis,
     list_tracked_counterparties,
+    mark_email_sent,
+    mark_email_skipped,
     remove_monitored_cui,
     remove_tracked_counterparty,
+    update_attempt,
+    update_pdf_path,
+    update_zip_path,
     upsert_poll_state,
 )
 
@@ -157,3 +167,117 @@ def test_poll_state_is_keyed_by_cui_and_env(db: sqlite3.Connection, now_utc: dat
     upsert_poll_state(db, cui="12345678", env="test", last_polled_at=now_utc)
     assert get_poll_state(db, cui="12345678", env="prod") is not None
     assert get_poll_state(db, cui="12345678", env="test") is not None
+
+
+def _msg(**overrides: Any) -> SyncedMessage:
+    base = SyncedMessage(
+        msg_id="3001",
+        cui="12345678",
+        env="prod",
+        msg_type="PRIMITA",
+        counterparty_cui="RO111",
+        issue_date=date(2026, 5, 4),
+        zip_path=None,
+        pdf_path=None,
+        email_sent_at=None,
+        email_skip_reason=None,
+        first_seen_at=datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+        last_attempt_at=datetime(2026, 5, 4, 10, 0, tzinfo=UTC),
+        last_error=None,
+    )
+    return SyncedMessage(**{**base.__dict__, **overrides})
+
+
+def test_insert_synced_message_returns_true_when_new(
+    db: sqlite3.Connection, now_utc: datetime
+) -> None:
+    init_schema(db)
+    inserted = insert_synced_message(db, _msg())
+    assert inserted is True
+
+    inserted_again = insert_synced_message(db, _msg())
+    assert inserted_again is False  # ON CONFLICT DO NOTHING
+
+
+def test_get_synced_message_round_trip(db: sqlite3.Connection, now_utc: datetime) -> None:
+    init_schema(db)
+    insert_synced_message(db, _msg())
+    got = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert got is not None
+    assert got.msg_type == "PRIMITA"
+    assert got.issue_date == date(2026, 5, 4)
+
+
+def test_step_markers_set_paths_and_email(db: sqlite3.Connection, now_utc: datetime) -> None:
+    init_schema(db)
+    insert_synced_message(db, _msg())
+
+    update_zip_path(db, msg_id="3001", cui="12345678", env="prod", zip_path="rel/zip", now=now_utc)
+    update_pdf_path(db, msg_id="3001", cui="12345678", env="prod", pdf_path="rel/pdf", now=now_utc)
+    mark_email_sent(db, msg_id="3001", cui="12345678", env="prod", sent_at=now_utc)
+
+    row = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path == "rel/zip"
+    assert row.pdf_path == "rel/pdf"
+    assert row.email_sent_at == now_utc
+    assert row.last_error is None
+
+
+def test_mark_email_skipped_sets_reason(db: sqlite3.Connection, now_utc: datetime) -> None:
+    init_schema(db)
+    insert_synced_message(db, _msg())
+    mark_email_skipped(
+        db,
+        msg_id="3001",
+        cui="12345678",
+        env="prod",
+        reason="filtered_by_track_list",
+        now=now_utc,
+    )
+    row = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_sent_at is None
+
+
+def test_update_attempt_records_error_and_clears_on_success(
+    db: sqlite3.Connection, now_utc: datetime
+) -> None:
+    init_schema(db)
+    insert_synced_message(db, _msg())
+
+    update_attempt(db, msg_id="3001", cui="12345678", env="prod", error="boom", now=now_utc)
+    row1 = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert row1 is not None
+    assert row1.last_error == "boom"
+
+    update_attempt(db, msg_id="3001", cui="12345678", env="prod", error=None, now=now_utc)
+    row2 = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
+    assert row2 is not None
+    assert row2.last_error is None
+
+
+def test_find_pending_rows_returns_only_unfinished(
+    db: sqlite3.Connection, now_utc: datetime
+) -> None:
+    init_schema(db)
+    # complete row: zip + pdf + email_sent_at
+    insert_synced_message(db, _msg(msg_id="A"))
+    update_zip_path(db, msg_id="A", cui="12345678", env="prod", zip_path="zA", now=now_utc)
+    update_pdf_path(db, msg_id="A", cui="12345678", env="prod", pdf_path="pA", now=now_utc)
+    mark_email_sent(db, msg_id="A", cui="12345678", env="prod", sent_at=now_utc)
+
+    # PRIMITA missing pdf
+    insert_synced_message(db, _msg(msg_id="B"))
+    update_zip_path(db, msg_id="B", cui="12345678", env="prod", zip_path="zB", now=now_utc)
+
+    # MESAJ — no pdf needed; missing email
+    insert_synced_message(
+        db,
+        _msg(msg_id="C", msg_type="MESAJ", counterparty_cui=None, issue_date=None),
+    )
+    update_zip_path(db, msg_id="C", cui="12345678", env="prod", zip_path="zC", now=now_utc)
+
+    pending = {r.msg_id for r in find_pending_rows(db, cui="12345678", env="prod")}
+    assert pending == {"B", "C"}

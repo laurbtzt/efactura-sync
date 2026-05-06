@@ -6,7 +6,8 @@ Every public function takes a ``sqlite3.Connection`` as its first argument.
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from typing import Any
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS monitored_cuis (
@@ -195,3 +196,178 @@ def upsert_poll_state(
         (cui, env, _iso(last_polled_at)),
     )
     conn.commit()
+
+
+@dataclass(frozen=True)
+class SyncedMessage:
+    msg_id: str
+    cui: str
+    env: str
+    msg_type: str  # 'PRIMITA' | 'TRIMISA' | 'ERORI' | 'MESAJ'
+    counterparty_cui: str | None
+    issue_date: date | None
+    zip_path: str | None
+    pdf_path: str | None
+    email_sent_at: datetime | None
+    email_skip_reason: str | None
+    first_seen_at: datetime
+    last_attempt_at: datetime
+    last_error: str | None
+
+
+def _row_to_msg(row: tuple[Any, ...]) -> SyncedMessage:
+    return SyncedMessage(
+        msg_id=row[0],
+        cui=row[1],
+        env=row[2],
+        msg_type=row[3],
+        counterparty_cui=row[4],
+        issue_date=date.fromisoformat(row[5]) if row[5] else None,
+        zip_path=row[6],
+        pdf_path=row[7],
+        email_sent_at=_parse_iso(row[8]) if row[8] else None,
+        email_skip_reason=row[9],
+        first_seen_at=_parse_iso(row[10]),
+        last_attempt_at=_parse_iso(row[11]),
+        last_error=row[12],
+    )
+
+
+_SELECT_COLS = (
+    "msg_id, cui, env, msg_type, counterparty_cui, issue_date, "
+    "zip_path, pdf_path, email_sent_at, email_skip_reason, "
+    "first_seen_at, last_attempt_at, last_error"
+)
+
+
+def insert_synced_message(conn: sqlite3.Connection, msg: SyncedMessage) -> bool:
+    cur = conn.execute(
+        f"""
+        INSERT INTO synced_messages({_SELECT_COLS})
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(msg_id, cui, env) DO NOTHING
+        """,
+        (
+            msg.msg_id,
+            msg.cui,
+            msg.env,
+            msg.msg_type,
+            msg.counterparty_cui,
+            msg.issue_date.isoformat() if msg.issue_date else None,
+            msg.zip_path,
+            msg.pdf_path,
+            _iso(msg.email_sent_at) if msg.email_sent_at else None,
+            msg.email_skip_reason,
+            _iso(msg.first_seen_at),
+            _iso(msg.last_attempt_at),
+            msg.last_error,
+        ),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def get_synced_message(
+    conn: sqlite3.Connection, *, msg_id: str, cui: str, env: str
+) -> SyncedMessage | None:
+    row = conn.execute(
+        f"SELECT {_SELECT_COLS} FROM synced_messages WHERE msg_id=? AND cui=? AND env=?",
+        (msg_id, cui, env),
+    ).fetchone()
+    return None if row is None else _row_to_msg(row)
+
+
+def update_zip_path(
+    conn: sqlite3.Connection,
+    *,
+    msg_id: str,
+    cui: str,
+    env: str,
+    zip_path: str,
+    now: datetime,
+) -> None:
+    conn.execute(
+        "UPDATE synced_messages SET zip_path=?, last_attempt_at=?, last_error=NULL "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (zip_path, _iso(now), msg_id, cui, env),
+    )
+    conn.commit()
+
+
+def update_pdf_path(
+    conn: sqlite3.Connection,
+    *,
+    msg_id: str,
+    cui: str,
+    env: str,
+    pdf_path: str,
+    now: datetime,
+) -> None:
+    conn.execute(
+        "UPDATE synced_messages SET pdf_path=?, last_attempt_at=?, last_error=NULL "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (pdf_path, _iso(now), msg_id, cui, env),
+    )
+    conn.commit()
+
+
+def mark_email_sent(
+    conn: sqlite3.Connection, *, msg_id: str, cui: str, env: str, sent_at: datetime
+) -> None:
+    conn.execute(
+        "UPDATE synced_messages SET email_sent_at=?, last_attempt_at=?, last_error=NULL "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (_iso(sent_at), _iso(sent_at), msg_id, cui, env),
+    )
+    conn.commit()
+
+
+def mark_email_skipped(
+    conn: sqlite3.Connection,
+    *,
+    msg_id: str,
+    cui: str,
+    env: str,
+    reason: str,
+    now: datetime,
+) -> None:
+    conn.execute(
+        "UPDATE synced_messages SET email_skip_reason=?, last_attempt_at=?, last_error=NULL "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (reason, _iso(now), msg_id, cui, env),
+    )
+    conn.commit()
+
+
+def update_attempt(
+    conn: sqlite3.Connection,
+    *,
+    msg_id: str,
+    cui: str,
+    env: str,
+    error: str | None,
+    now: datetime,
+) -> None:
+    conn.execute(
+        "UPDATE synced_messages SET last_attempt_at=?, last_error=? "
+        "WHERE msg_id=? AND cui=? AND env=?",
+        (_iso(now), error, msg_id, cui, env),
+    )
+    conn.commit()
+
+
+def find_pending_rows(conn: sqlite3.Connection, *, cui: str, env: str) -> list[SyncedMessage]:
+    rows = conn.execute(
+        f"""
+        SELECT {_SELECT_COLS} FROM synced_messages
+        WHERE cui=? AND env=?
+          AND (
+            zip_path IS NULL
+            OR (msg_type IN ('PRIMITA','TRIMISA') AND pdf_path IS NULL)
+            OR (email_sent_at IS NULL AND email_skip_reason IS NULL)
+          )
+        ORDER BY first_seen_at
+        """,
+        (cui, env),
+    ).fetchall()
+    return [_row_to_msg(r) for r in rows]

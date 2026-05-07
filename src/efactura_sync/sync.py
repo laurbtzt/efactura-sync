@@ -14,6 +14,7 @@ values without actually sending email. Rows that "would email" are tagged
 ``mail_pending_v1`` so a future task can backfill them.
 """
 
+import logging
 import math
 import sqlite3
 from dataclasses import dataclass
@@ -38,6 +39,8 @@ from efactura_sync.storage.layout import (
     message_zip_path,
 )
 from efactura_sync.types import Env
+
+_log = logging.getLogger(__name__)
 
 
 class _AnafLike(Protocol):
@@ -280,7 +283,7 @@ def process_one_message(
 # ---- per-CUI run ----------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class RunResult:
     processed: int
     failures: int
@@ -305,16 +308,31 @@ def run_for_cui(
     """Run a full daily sync for a single CUI.
 
     Steps: resume any pending rows; list new messages; process each new one.
-    Records ``poll_state`` after the resume + new-message phases both
-    complete (even if individual messages failed; we want the next run's
-    zile window to advance forward).
+    Records ``poll_state`` after both phases complete. Per-message errors are
+    absorbed (recorded via ``update_attempt``, counted in ``failures``).
+
+    Raises:
+        Whatever ``anaf.list_messages`` raises if the new-message poll fails
+        at the network/HTTP level. In that case ``last_polled_at`` is NOT
+        advanced — the caller can retry next day. Per-message exceptions
+        inside the resume / new-message loops do NOT propagate; they are
+        recorded on the row's ``last_error`` and counted in ``failures``.
     """
+    _log.info("starting run cui=%s env=%s", my_cui, env)
     processed = 0
     failures = 0
 
     # Resume pass: re-process pending rows. We rebuild a synthetic ListMessage
     # from each pending row so process_one_message can drive its state machine.
-    for row in dbq.find_pending_rows(deps.db, cui=my_cui, env=env):
+    pending_rows = list(dbq.find_pending_rows(deps.db, cui=my_cui, env=env))
+    _log.info("resume: %d pending row(s)", len(pending_rows))
+    for row in pending_rows:
+        # data_creare_utc=row.first_seen_at: not the true ANAF creation timestamp,
+        # but functionally a no-op on the resume path — process_one_message only
+        # uses it for the partition-date fallback when XML parsing fails, and a
+        # row in find_pending_rows already has zip_path set (or will be re-downloaded
+        # on this iteration), so the partition path is recomputed from the parsed
+        # issue_date rather than this synthetic timestamp.
         list_msg = ListMessage(
             msg_id=row.msg_id,
             cif=my_cui,
@@ -333,6 +351,10 @@ def run_for_cui(
                 now=now,
             )
             processed += 1
+        # Catch broad Exception (not just EfacturaError) so a programming bug in
+        # process_one_message becomes one recorded per-row failure rather than
+        # aborting the whole daily run. KeyboardInterrupt / SystemExit pass
+        # through (they're BaseException, not Exception).
         except Exception as e:
             failures += 1
             dbq.update_attempt(
@@ -347,6 +369,7 @@ def run_for_cui(
     # New-message poll
     zile = _zile_for_run(deps, cui=my_cui, env=env, now=now)
     new_msgs = deps.anaf.list_messages(cif=my_cui, zile=zile, access_token=access_token)
+    _log.info("poll: zile=%d new=%d", zile, len(new_msgs))
     for msg in new_msgs:
         try:
             process_one_message(
@@ -358,6 +381,10 @@ def run_for_cui(
                 now=now,
             )
             processed += 1
+        # Catch broad Exception (not just EfacturaError) so a programming bug in
+        # process_one_message becomes one recorded per-row failure rather than
+        # aborting the whole daily run. KeyboardInterrupt / SystemExit pass
+        # through (they're BaseException, not Exception).
         except Exception as e:
             failures += 1
             dbq.update_attempt(
@@ -370,4 +397,5 @@ def run_for_cui(
             )
 
     dbq.upsert_poll_state(deps.db, cui=my_cui, env=env, last_polled_at=now)
+    _log.info("done cui=%s processed=%d failures=%d", my_cui, processed, failures)
     return RunResult(processed=processed, failures=failures)

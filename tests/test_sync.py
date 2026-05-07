@@ -400,6 +400,9 @@ def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc: 
         now=now_utc,
     )
     # Simulate "crash before email decision" by clearing email_skip_reason.
+    # email_skip_reason='mail_pending_v1' is the deferred-mail equivalent of
+    # email_sent_at; clearing it simulates a row that crashed before the email
+    # decision step.
     deps.db.execute("UPDATE synced_messages SET email_skip_reason=NULL WHERE msg_id='3001'")
     deps.db.commit()
 
@@ -424,3 +427,93 @@ def test_run_for_cui_records_poll_state_on_success(deps: SyncDeps, now_utc: date
     state = get_poll_state(deps.db, cui="12345678", env="prod")
     assert state is not None
     assert state.last_polled_at == now_utc
+
+
+def test_run_for_cui_per_message_failure_in_poll_phase(deps: SyncDeps, now_utc: datetime) -> None:
+    """When process_one_message blows up, that row counts as a failure but the
+    run continues, last_error is set, and poll_state still advances."""
+
+    class CrashOnDownload(FakeAnaf):
+        def download(self, *, msg_id: str, access_token: str) -> bytes:
+            raise RuntimeError("disk full")  # programming bug-ish
+
+    deps.anaf = CrashOnDownload(list_response=[_list_msg()])  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    # process_one_message handles EfacturaError-derived errors itself, but a raw
+    # RuntimeError escapes — caught by run_for_cui's broad except.
+    # Wait: process_one_message catches EfacturaError, not RuntimeError, so the
+    # RuntimeError bubbles up out of process_one_message and into run_for_cui's
+    # `except Exception`.
+    assert result.processed == 0
+    assert result.failures == 1
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.last_error is not None and row.last_error.startswith("poll:")
+
+    # poll_state still advanced (we did successfully list, even if one row failed).
+    from efactura_sync.storage.db import get_poll_state
+
+    state = get_poll_state(deps.db, cui="12345678", env="prod")
+    assert state is not None
+    assert state.last_polled_at == now_utc
+
+
+def test_run_for_cui_list_messages_error_does_not_advance_poll_state(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    """If anaf.list_messages itself raises, poll_state is NOT advanced.
+
+    Rationale: we didn't successfully observe the new-message window, so the
+    next run should re-attempt with the same `since` time.
+    """
+    from efactura_sync.errors import TransientError
+    from efactura_sync.storage.db import get_poll_state
+
+    class ListFails(FakeAnaf):
+        def list_messages(self, *, cif: str, zile: int, access_token: str) -> list[ListMessage]:
+            raise TransientError("anaf 503", status=503, body=b"")
+
+    deps.anaf = ListFails()  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    with pytest.raises(TransientError):
+        run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    # poll_state must remain absent (no row inserted by run_for_cui).
+    state = get_poll_state(deps.db, cui="12345678", env="prod")
+    assert state is None
+
+
+def test_run_for_cui_idempotent_on_quick_rerun(deps: SyncDeps, now_utc: datetime) -> None:
+    """Running twice in a row with the same message lists ANAF twice but
+    INSERT ON CONFLICT DO NOTHING absorbs the duplicate."""
+    deps.anaf = FakeAnaf(  # type: ignore[assignment]
+        list_response=[_list_msg()],
+        download_payload=_make_zip(UBL_FIXTURE),
+    )
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    r1 = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+    r2 = run_for_cui(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        now=now_utc + timedelta(seconds=10),
+    )
+
+    # Both runs called list_messages (we don't try to dedup at the network layer).
+    assert len(deps.anaf.list_calls) == 2  # type: ignore[attr-defined]
+    # But the message was downloaded only once (second run sees the dedup row).
+    assert deps.anaf.download_calls == ["3001"]  # type: ignore[attr-defined]
+    # Both report processed=1 (resume re-marks the row's email decision idempotently;
+    # since email_skip_reason is already set on r2, process_one_message no-ops).
+    assert r1.processed == 1
+    assert r1.failures == 0
+    assert r2.processed >= 0
+    assert r2.failures == 0

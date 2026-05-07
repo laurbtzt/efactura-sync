@@ -1,3 +1,4 @@
+import sqlite3 as _sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -5,6 +6,15 @@ import pytest
 from typer.testing import CliRunner
 
 from efactura_sync.cli import app
+from efactura_sync.storage.db import (
+    init_schema as _init_schema,
+)
+from efactura_sync.storage.db import (
+    list_monitored_cuis as _list_monitored_cuis,
+)
+from efactura_sync.storage.db import (
+    list_tracked_counterparties as _list_tracked_counterparties,
+)
 
 runner = CliRunner()
 
@@ -225,3 +235,111 @@ def test_auth_login_propagates_oauth_failure(
     assert result.exit_code != 0
     # No token file should have been written.
     assert not (tmp_path / "tokens" / "12345678.prod.json").exists()
+
+
+def _cli_args(tmp_path: Path, db_path: Path) -> list[str]:
+    """Build the global option args for any CLI invocation."""
+    config_file, secrets_file = _write_fixture_files(tmp_path)
+    return [
+        "--config",
+        str(config_file),
+        "--secrets",
+        str(secrets_file),
+        "--tokens-dir",
+        str(tmp_path / "tokens"),
+        "--db",
+        str(db_path),
+    ]
+
+
+def test_cui_add_list_remove(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+
+    r1 = runner.invoke(
+        app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678", "--name", "Acme"]
+    )
+    assert r1.exit_code == 0, r1.stdout
+
+    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "list"])
+    assert r2.exit_code == 0, r2.stdout
+    assert "12345678" in r2.stdout
+    assert "Acme" in r2.stdout
+
+    r3 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "remove", "12345678"])
+    assert r3.exit_code == 0, r3.stdout
+
+    # Verify by re-opening the DB directly: nothing left.
+    conn = _sqlite3.connect(db_path)
+    _init_schema(conn)
+    try:
+        assert _list_monitored_cuis(conn) == []
+    finally:
+        conn.close()
+
+
+def test_cui_list_empty(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "list"])
+    assert result.exit_code == 0, result.stdout
+    assert "no monitored CUIs" in result.stdout
+
+
+def test_track_add_list_remove(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    # Register the parent monitored CUI first.
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+
+    r1 = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["track", "add", "RO111", "--cui", "12345678"],
+    )
+    assert r1.exit_code == 0, r1.stdout
+
+    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["track", "list", "--cui", "12345678"])
+    assert r2.exit_code == 0, r2.stdout
+    assert "RO111" in r2.stdout
+
+    r3 = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["track", "remove", "RO111", "--cui", "12345678"],
+    )
+    assert r3.exit_code == 0, r3.stdout
+
+    conn = _sqlite3.connect(db_path)
+    _init_schema(conn)
+    try:
+        assert _list_tracked_counterparties(conn, my_cui="12345678") == []
+    finally:
+        conn.close()
+
+
+def test_track_add_without_parent_cui_fails(tmp_path: Path) -> None:
+    """track add requires the parent monitored CUI to exist first (FK constraint)."""
+    db_path = tmp_path / "state.db"
+    result = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path)
+        + ["track", "add", "RO111", "--cui", "12345678"],  # 12345678 not added
+    )
+    assert result.exit_code != 0
+
+
+def test_cui_remove_cascades_to_tracked(tmp_path: Path) -> None:
+    """`cui remove` should also remove rows in tracked_counterparties (FK CASCADE)."""
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["track", "add", "RO111", "--cui", "12345678"],
+    )
+
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "remove", "12345678"])
+
+    conn = _sqlite3.connect(db_path)
+    _init_schema(conn)
+    try:
+        # Both monitored CUI and its tracked counterparty are gone.
+        assert _list_monitored_cuis(conn) == []
+        assert _list_tracked_counterparties(conn, my_cui="12345678") == []
+    finally:
+        conn.close()

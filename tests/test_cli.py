@@ -404,7 +404,7 @@ def test_sync_run_dry_run_skips_real_work(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert calls == []
     # Dry-run should mention the CUI it would have processed.
     assert "12345678" in result.stdout
-    assert "dry" in result.stdout.lower()
+    assert "[dry-run]" in result.stdout
 
 
 def test_status_lists_cuis_and_token_state(tmp_path: Path) -> None:
@@ -495,3 +495,109 @@ def test_replay_clears_step_markers(tmp_path: Path) -> None:
     assert row.pdf_path is None
     assert row.email_sent_at is None
     assert row.email_skip_reason is None
+
+
+def test_sync_run_refreshes_expiring_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """If the stored token is within the refresh buffer, sync run refreshes it."""
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+
+    # Pre-save a token that's already past expiry — needs_refresh returns True.
+    save_token(
+        tmp_path / "tokens",
+        Token(
+            cui="12345678",
+            env="prod",
+            access_token="old-acc",
+            refresh_token="old-ref",
+            expires_at=datetime(2020, 1, 1, tzinfo=UTC),  # already expired
+            obtained_at=datetime(2019, 1, 1, tzinfo=UTC),
+        ),
+    )
+
+    refresh_calls: list[dict[str, object]] = []
+
+    def fake_refresh(**kwargs: object) -> Token:
+        refresh_calls.append(kwargs)
+        return Token(
+            cui=str(kwargs["cui"]),
+            env="prod",
+            access_token="new-acc",
+            refresh_token="new-ref",
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        )
+
+    seen_tokens: list[str] = []
+
+    def fake_run(deps: object, **kwargs: object) -> object:
+        seen_tokens.append(str(kwargs["access_token"]))
+        from efactura_sync.sync import RunResult
+
+        return RunResult(processed=0, failures=0)
+
+    monkeypatch.setattr("efactura_sync.cli.refresh_access_token", fake_refresh)
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
+
+    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    assert result.exit_code == 0, result.stdout
+
+    # Refresh was called with the old refresh_token.
+    assert len(refresh_calls) == 1
+    assert refresh_calls[0]["refresh_token"] == "old-ref"
+    # run_for_cui got the new access_token.
+    assert seen_tokens == ["new-acc"]
+
+
+def test_sync_run_filter_matches_one_of_many(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--cui X` runs only X, not the others."""
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "11111111"])
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "22222222"])
+
+    for cui in ("11111111", "22222222"):
+        save_token(
+            tmp_path / "tokens",
+            Token(
+                cui=cui,
+                env="prod",
+                access_token=f"acc-{cui}",
+                refresh_token="ref",
+                expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+                obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+            ),
+        )
+
+    calls: list[str] = []
+
+    def fake_run(deps: object, **kwargs: object) -> object:
+        calls.append(str(kwargs["my_cui"]))
+        from efactura_sync.sync import RunResult
+
+        return RunResult(processed=0, failures=0)
+
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
+
+    result = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--cui", "11111111"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert calls == ["11111111"]
+
+
+def test_sync_run_filter_unregistered_cui_exits_two(tmp_path: Path) -> None:
+    """`--cui Y` where Y isn't in monitored_cuis exits 2 with a clear message."""
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "11111111"])
+
+    result = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--cui", "99999999"],
+    )
+    assert result.exit_code == 2
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "99999999" in combined
+    assert "not monitored" in combined

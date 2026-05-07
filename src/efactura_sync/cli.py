@@ -18,7 +18,8 @@ from efactura_sync.anaf.oauth import (
     refresh_access_token,
     save_token,
 )
-from efactura_sync.config import load_config
+from efactura_sync.config import Config, load_config
+from efactura_sync.errors import AuthError
 from efactura_sync.render import PdfRenderer
 from efactura_sync.storage.db import (
     add_monitored_cui,
@@ -134,10 +135,10 @@ def _open_db(ctx: typer.Context) -> sqlite3.Connection:
     return conn
 
 
-def _prepare(ctx: typer.Context, env: str) -> tuple[_CliContext, Env, str, str, datetime]:
+def _prepare(ctx: typer.Context, env: str) -> tuple[_CliContext, Config, Env, str, str, datetime]:
     """Run the common preamble for any command that needs config + ANAF creds.
 
-    Returns (cli_ctx, env_typed, client_id, client_secret, now_utc).
+    Returns (cli_ctx, cfg, env_typed, client_id, client_secret, now_utc).
     """
     cli_ctx = _ctx(ctx)
     env_typed = _validate_env(env)
@@ -147,7 +148,7 @@ def _prepare(ctx: typer.Context, env: str) -> tuple[_CliContext, Env, str, str, 
     )
     client_id, client_secret = cfg.anaf_credentials(env_typed)
     now = datetime.now(UTC)
-    return cli_ctx, env_typed, client_id, client_secret, now
+    return cli_ctx, cfg, env_typed, client_id, client_secret, now
 
 
 @auth_app.command("login")
@@ -157,7 +158,7 @@ def auth_login(
     env: str = _OPT_ENV,
 ) -> None:
     """Run the interactive OAuth2 authorization-code flow on a host with the cert."""
-    cli_ctx, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+    cli_ctx, _, env_typed, client_id, client_secret, now = _prepare(ctx, env)
     with httpx.Client() as http:
         token = auth_code_login(
             http=http,
@@ -178,7 +179,7 @@ def auth_refresh(
     env: str = _OPT_ENV,
 ) -> None:
     """Refresh access token using the stored refresh token (no cert required)."""
-    cli_ctx, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+    cli_ctx, _, env_typed, client_id, client_secret, now = _prepare(ctx, env)
     tok = load_token(cli_ctx.tokens_dir, cui=cui, env=env)
     with httpx.Client() as http:
         new_tok = refresh_access_token(
@@ -303,7 +304,7 @@ def sync_run_cmd(
     dry_run: bool = _OPT_DRY_RUN,
 ) -> None:
     """Run the daily sync for one or all monitored CUIs."""
-    cli_ctx, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+    cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
 
     conn = _open_db(ctx)
     try:
@@ -312,7 +313,15 @@ def sync_run_cmd(
         conn.close()
 
     if cui is not None:
-        monitored = [m for m in monitored if m.cui == cui]
+        matched = [m for m in monitored if m.cui == cui]
+        if not matched:
+            typer.echo(
+                f"cui {cui!r} is not monitored; use 'cui add' first",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        monitored = matched
+
     if not monitored:
         typer.echo("no monitored CUIs to sync")
         return
@@ -322,10 +331,6 @@ def sync_run_cmd(
             typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
         return
 
-    cfg = load_config(
-        config_path=cli_ctx.config_path,
-        secrets_path=cli_ctx.secrets_path,
-    )
     archive_root = cfg.archive_root
 
     try:
@@ -398,7 +403,7 @@ def status_cmd(
                 tok_str = f"expires {tok.expires_at.isoformat()}"
                 if needs_refresh(tok, now=now):
                     tok_str += " (refresh due!)"
-            except Exception:
+            except AuthError, FileNotFoundError:
                 tok_str = "no token"
 
             state = get_poll_state(conn, cui=c.cui, env=env_typed)

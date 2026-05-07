@@ -1,6 +1,6 @@
 import io
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zipfile import ZipFile
@@ -14,9 +14,10 @@ from efactura_sync.storage.db import (
     add_tracked_counterparty,
     get_synced_message,
     init_schema,
+    upsert_poll_state,
 )
 from efactura_sync.storage.files import FileStore
-from efactura_sync.sync import SyncDeps, process_one_message
+from efactura_sync.sync import RunResult, SyncDeps, process_one_message, run_for_cui
 
 # --- fakes ----------------------------------------------------------------
 
@@ -347,3 +348,79 @@ def test_primita_with_null_counterparty_marks_pending_not_filtered(
     # supplier_cui couldn't be parsed -> defensive default is mail_pending_v1, not filtered.
     assert row.counterparty_cui is None
     assert row.email_skip_reason == "mail_pending_v1"
+
+
+def test_run_for_cui_polls_and_processes(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf = FakeAnaf(  # type: ignore[assignment]
+        list_response=[_list_msg()],
+        download_payload=_make_zip(UBL_FIXTURE),
+    )
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    assert isinstance(result, RunResult)
+    assert result.processed == 1
+    assert result.failures == 0
+    [(_, zile)] = deps.anaf.list_calls  # type: ignore[attr-defined]
+    assert zile == 1  # first run, no poll_state yet
+
+
+def test_run_for_cui_uses_zile_window_from_poll_state(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf = FakeAnaf(list_response=[])  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    upsert_poll_state(
+        deps.db,
+        cui="12345678",
+        env="prod",
+        last_polled_at=now_utc - timedelta(days=3),
+    )
+
+    run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    [(_, zile)] = deps.anaf.list_calls  # type: ignore[attr-defined]
+    assert zile == 4  # 3 days + 1 safety overlap
+
+
+def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf = FakeAnaf(  # type: ignore[assignment]
+        list_response=[],
+        download_payload=_make_zip(UBL_FIXTURE),
+    )
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    # Pre-populate a row that has been processed once already.
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+    # Simulate "crash before email decision" by clearing email_skip_reason.
+    deps.db.execute("UPDATE synced_messages SET email_skip_reason=NULL WHERE msg_id='3001'")
+    deps.db.commit()
+
+    result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    # The pending row was finished (email decision marked).
+    assert result.processed >= 1
+    assert result.failures == 0
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.email_skip_reason == "mail_pending_v1"
+
+
+def test_run_for_cui_records_poll_state_on_success(deps: SyncDeps, now_utc: datetime) -> None:
+    deps.anaf = FakeAnaf(list_response=[])  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+
+    run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    from efactura_sync.storage.db import get_poll_state
+
+    state = get_poll_state(deps.db, cui="12345678", env="prod")
+    assert state is not None
+    assert state.last_polled_at == now_utc

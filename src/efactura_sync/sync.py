@@ -14,16 +14,18 @@ values without actually sending email. Rows that "would email" are tagged
 ``mail_pending_v1`` so a future task can backfill them.
 """
 
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 from zoneinfo import ZoneInfo
 
 from efactura_sync.anaf.messages import (
     InvoiceFields,
     ListMessage,
+    MsgType,
     extract_ubl_xml,
     parse_invoice_fields,
 )
@@ -273,3 +275,99 @@ def process_one_message(
         reason=skip_reason,
         now=now,
     )
+
+
+# ---- per-CUI run ----------------------------------------------------------
+
+
+@dataclass
+class RunResult:
+    processed: int
+    failures: int
+
+
+def _zile_for_run(deps: SyncDeps, *, cui: str, env: Env, now: datetime) -> int:
+    state = dbq.get_poll_state(deps.db, cui=cui, env=env)
+    if state is None:
+        return 1
+    delta_days = math.ceil((now - state.last_polled_at).total_seconds() / 86400) + 1
+    return max(1, min(60, delta_days))
+
+
+def run_for_cui(
+    deps: SyncDeps,
+    *,
+    my_cui: str,
+    env: Env,
+    access_token: str,
+    now: datetime,
+) -> RunResult:
+    """Run a full daily sync for a single CUI.
+
+    Steps: resume any pending rows; list new messages; process each new one.
+    Records ``poll_state`` after the resume + new-message phases both
+    complete (even if individual messages failed; we want the next run's
+    zile window to advance forward).
+    """
+    processed = 0
+    failures = 0
+
+    # Resume pass: re-process pending rows. We rebuild a synthetic ListMessage
+    # from each pending row so process_one_message can drive its state machine.
+    for row in dbq.find_pending_rows(deps.db, cui=my_cui, env=env):
+        list_msg = ListMessage(
+            msg_id=row.msg_id,
+            cif=my_cui,
+            data_creare_utc=row.first_seen_at,
+            tip_raw=row.msg_type,
+            tip=cast(MsgType, row.msg_type),
+            detalii="",
+        )
+        try:
+            process_one_message(
+                deps,
+                my_cui=my_cui,
+                env=env,
+                access_token=access_token,
+                list_msg=list_msg,
+                now=now,
+            )
+            processed += 1
+        except Exception as e:
+            failures += 1
+            dbq.update_attempt(
+                deps.db,
+                msg_id=row.msg_id,
+                cui=my_cui,
+                env=env,
+                error=f"resume: {e}",
+                now=now,
+            )
+
+    # New-message poll
+    zile = _zile_for_run(deps, cui=my_cui, env=env, now=now)
+    new_msgs = deps.anaf.list_messages(cif=my_cui, zile=zile, access_token=access_token)
+    for msg in new_msgs:
+        try:
+            process_one_message(
+                deps,
+                my_cui=my_cui,
+                env=env,
+                access_token=access_token,
+                list_msg=msg,
+                now=now,
+            )
+            processed += 1
+        except Exception as e:
+            failures += 1
+            dbq.update_attempt(
+                deps.db,
+                msg_id=msg.msg_id,
+                cui=my_cui,
+                env=env,
+                error=f"poll: {e}",
+                now=now,
+            )
+
+    dbq.upsert_poll_state(deps.db, cui=my_cui, env=env, last_polled_at=now)
+    return RunResult(processed=processed, failures=failures)

@@ -1,6 +1,7 @@
 """Typer CLI."""
 
 import sqlite3
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,16 +10,21 @@ from typing import cast
 import httpx
 import typer
 
+from efactura_sync.anaf.client import AnafClient
 from efactura_sync.anaf.oauth import (
     auth_code_login,
     load_token,
+    needs_refresh,
     refresh_access_token,
     save_token,
 )
 from efactura_sync.config import load_config
+from efactura_sync.render import PdfRenderer
 from efactura_sync.storage.db import (
     add_monitored_cui,
     add_tracked_counterparty,
+    find_pending_rows,
+    get_poll_state,
     init_schema,
     list_monitored_cuis,
     list_tracked_counterparties,
@@ -26,6 +32,8 @@ from efactura_sync.storage.db import (
     remove_tracked_counterparty,
 )
 from efactura_sync.storage.db import connect as _db_connect
+from efactura_sync.storage.files import FileStore
+from efactura_sync.sync import SyncDeps, run_for_cui
 from efactura_sync.types import Env
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -71,6 +79,13 @@ _TRACK_CUI_OPT = typer.Option(
 _COUNTERPARTY_ARG = typer.Argument(
     ..., help="Counterparty (supplier) CUI to track for PRIMITA email."
 )
+_OPT_CUI_FILTER = typer.Option(
+    None, "--cui", help="Only run this CUI; default = all monitored CUIs."
+)
+_OPT_DRY_RUN = typer.Option(
+    False, "--dry-run", help="Walk the pipeline but do not write or call ANAF."
+)
+_REPLAY_MSG_ID_ARG = typer.Argument(..., help="ANAF message id to replay.")
 
 
 @dataclass(frozen=True)
@@ -275,3 +290,152 @@ def track_remove_cmd(
     finally:
         conn.close()
     typer.echo(f"OK — untracked {counterparty_cui} from cui {cui}")
+
+
+# --- sync / status / replay ---
+
+
+@sync_app.command("run")
+def sync_run_cmd(
+    ctx: typer.Context,
+    cui: str | None = _OPT_CUI_FILTER,
+    env: str = _OPT_ENV,
+    dry_run: bool = _OPT_DRY_RUN,
+) -> None:
+    """Run the daily sync for one or all monitored CUIs."""
+    cli_ctx, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+
+    conn = _open_db(ctx)
+    try:
+        monitored = list_monitored_cuis(conn)
+    finally:
+        conn.close()
+
+    if cui is not None:
+        monitored = [m for m in monitored if m.cui == cui]
+    if not monitored:
+        typer.echo("no monitored CUIs to sync")
+        return
+
+    if dry_run:
+        for m in monitored:
+            typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
+        return
+
+    cfg = load_config(
+        config_path=cli_ctx.config_path,
+        secrets_path=cli_ctx.secrets_path,
+    )
+    archive_root = cfg.archive_root
+
+    try:
+        with httpx.Client() as http:
+            anaf = AnafClient(http=http, env=env_typed)
+            renderer = PdfRenderer(http=http, env=env_typed)
+            for m in monitored:
+                conn = _open_db(ctx)
+                try:
+                    tok = load_token(cli_ctx.tokens_dir, cui=m.cui, env=env)
+                    if needs_refresh(tok, now=now):
+                        tok = refresh_access_token(
+                            http=http,
+                            env=env_typed,
+                            client_id=client_id,
+                            client_secret=client_secret,
+                            cui=m.cui,
+                            refresh_token=tok.refresh_token,
+                            now=now,
+                        )
+                        save_token(cli_ctx.tokens_dir, tok)
+                    deps = SyncDeps(
+                        anaf=anaf,
+                        renderer=renderer,
+                        files=FileStore(),
+                        db=conn,
+                        archive_root=archive_root,
+                    )
+                    result = run_for_cui(
+                        deps,
+                        my_cui=m.cui,
+                        env=env_typed,
+                        access_token=tok.access_token,
+                        now=now,
+                    )
+                    typer.echo(
+                        f"cui={m.cui} env={env_typed} "
+                        f"processed={result.processed} failures={result.failures}"
+                    )
+                finally:
+                    conn.close()
+    except Exception:
+        # NOTE(mail-deferred): when mail.py lands, wrap this in a Mailer.send
+        # of a render_failure_email() per spec §6.5. For now, surface the
+        # traceback to stderr and exit non-zero so cron alerts.
+        typer.echo("sync run failed:", err=True)
+        traceback.print_exc()
+        raise typer.Exit(code=1) from None
+
+
+@app.command("status")
+def status_cmd(
+    ctx: typer.Context,
+    env: str = _OPT_ENV,
+) -> None:
+    """Show monitored CUIs, token expiry, last poll, pending counts."""
+    env_typed = _validate_env(env)
+    cli_ctx = _ctx(ctx)
+    now = datetime.now(UTC)
+
+    conn = _open_db(ctx)
+    try:
+        cuis = list_monitored_cuis(conn)
+        if not cuis:
+            typer.echo("(no monitored CUIs yet — use 'cui add')")
+            return
+        for c in cuis:
+            try:
+                tok = load_token(cli_ctx.tokens_dir, cui=c.cui, env=env)
+                tok_str = f"expires {tok.expires_at.isoformat()}"
+                if needs_refresh(tok, now=now):
+                    tok_str += " (refresh due!)"
+            except Exception:
+                tok_str = "no token"
+
+            state = get_poll_state(conn, cui=c.cui, env=env_typed)
+            last_poll = state.last_polled_at.isoformat() if state else "never"
+            pending = len(find_pending_rows(conn, cui=c.cui, env=env_typed))
+            display = c.display_name or "—"
+            typer.echo(
+                f"{c.cui}\t{display}\ttoken: {tok_str}\tlast poll: {last_poll}\tpending: {pending}"
+            )
+    finally:
+        conn.close()
+
+
+@app.command("replay")
+def replay_cmd(
+    ctx: typer.Context,
+    msg_id: str = _REPLAY_MSG_ID_ARG,
+    cui: str = _TRACK_CUI_OPT,
+    env: str = _OPT_ENV,
+) -> None:
+    """Clear step markers on one message so the next sync run re-processes it.
+
+    This does NOT trigger the run itself — invoke ``sync run`` afterwards.
+    """
+    env_typed = _validate_env(env)
+    conn = _open_db(ctx)
+    try:
+        conn.execute(
+            "UPDATE synced_messages SET "
+            "zip_path=NULL, pdf_path=NULL, email_sent_at=NULL, email_skip_reason=NULL "
+            "WHERE msg_id=? AND cui=? AND env=?",
+            (msg_id, cui, env_typed),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    typer.echo(
+        f"replay queued for msg={msg_id} cui={cui}; "
+        f"run 'sync run --cui={cui} --env={env}' to process"
+    )

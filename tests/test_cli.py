@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from efactura_sync.anaf.oauth import Token, save_token
 from efactura_sync.cli import app
 from efactura_sync.storage.db import (
     init_schema as _init_schema,
@@ -343,3 +344,154 @@ def test_cui_remove_cascades_to_tracked(tmp_path: Path) -> None:
         assert _list_tracked_counterparties(conn, my_cui="12345678") == []
     finally:
         conn.close()
+
+
+def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "state.db"
+    # Pre-populate one monitored CUI.
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    # Pre-create a non-expired token file so needs_refresh is False.
+    save_token(
+        tmp_path / "tokens",
+        Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+
+    calls: list[str] = []
+
+    def fake_run(deps: object, **kwargs: object) -> object:
+        calls.append(str(kwargs["my_cui"]))
+        from efactura_sync.sync import RunResult
+
+        return RunResult(processed=0, failures=0)
+
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
+
+    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    assert result.exit_code == 0, result.stdout
+    assert calls == ["12345678"]
+    # Output mentions the cui and counts.
+    assert "12345678" in result.stdout
+    assert "processed=0" in result.stdout
+    assert "failures=0" in result.stdout
+
+
+def test_sync_run_dry_run_skips_real_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+
+    calls: list[object] = []
+
+    def fake_run(deps: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        raise AssertionError("run_for_cui must not be called in --dry-run")
+
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
+
+    result = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--dry-run"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert calls == []
+    # Dry-run should mention the CUI it would have processed.
+    assert "12345678" in result.stdout
+    assert "dry" in result.stdout.lower()
+
+
+def test_status_lists_cuis_and_token_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "state.db"
+    runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["cui", "add", "12345678", "--name", "Acme"],
+    )
+    save_token(
+        tmp_path / "tokens",
+        Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+
+    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["status", "--env", "prod"])
+    assert result.exit_code == 0, result.stdout
+    assert "12345678" in result.stdout
+    assert "Acme" in result.stdout
+    assert "2026-08-01" in result.stdout  # expires_at
+
+
+def test_replay_clears_step_markers(tmp_path: Path) -> None:
+    """`replay <msg_id>` clears step markers so next sync re-runs that message."""
+    from datetime import date
+
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+
+    # Pre-populate a synced_messages row that's fully done.
+    from efactura_sync.storage.db import (
+        SyncedMessage,
+        connect,
+        get_synced_message,
+        init_schema,
+        insert_synced_message,
+        mark_email_sent,
+        update_pdf_path,
+        update_zip_path,
+    )
+
+    conn = connect(db_path)
+    init_schema(conn)
+    now = datetime(2026, 5, 4, 10, 0, tzinfo=UTC)
+    insert_synced_message(
+        conn,
+        SyncedMessage(
+            msg_id="3001",
+            cui="12345678",
+            env="prod",
+            msg_type="PRIMITA",
+            counterparty_cui="RO111",
+            issue_date=date(2026, 5, 4),
+            zip_path=None,
+            pdf_path=None,
+            email_sent_at=None,
+            email_skip_reason=None,
+            first_seen_at=now,
+            last_attempt_at=now,
+            last_error=None,
+        ),
+    )
+    update_zip_path(conn, msg_id="3001", cui="12345678", env="prod", zip_path="z", now=now)
+    update_pdf_path(conn, msg_id="3001", cui="12345678", env="prod", pdf_path="p", now=now)
+    mark_email_sent(conn, msg_id="3001", cui="12345678", env="prod", sent_at=now)
+    conn.close()
+
+    result = runner.invoke(
+        app,
+        _cli_args(tmp_path, db_path) + ["replay", "3001", "--cui", "12345678", "--env", "prod"],
+    )
+    assert result.exit_code == 0, result.stdout
+
+    # Verify markers cleared.
+    conn = connect(db_path)
+    init_schema(conn)
+    try:
+        row = get_synced_message(conn, msg_id="3001", cui="12345678", env="prod")
+    finally:
+        conn.close()
+    assert row is not None
+    assert row.zip_path is None
+    assert row.pdf_path is None
+    assert row.email_sent_at is None
+    assert row.email_skip_reason is None

@@ -601,3 +601,45 @@ def test_sync_run_filter_unregistered_cui_exits_two(tmp_path: Path) -> None:
     combined = (result.stdout or "") + (result.stderr or "")
     assert "99999999" in combined
     assert "not monitored" in combined
+
+
+def test_sync_run_sends_failure_email_on_uncaught_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "state.db"
+    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+
+    save_token(
+        tmp_path / "tokens",
+        Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+
+    sent: list[tuple[object, str]] = []
+
+    class _CapturingMailer:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        def send(self, msg: object, *, to_addr: str) -> None:
+            sent.append((msg, to_addr))
+
+    monkeypatch.setattr("efactura_sync.cli.Mailer", _CapturingMailer)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", boom)
+
+    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    assert result.exit_code != 0
+    assert sent, "expected a failure email"
+    msg, to_addr = sent[0]
+    assert "[eroare-rulare]" in msg.subject  # type: ignore[attr-defined]
+    assert "kaboom" in msg.body or "RuntimeError" in msg.body  # type: ignore[attr-defined]

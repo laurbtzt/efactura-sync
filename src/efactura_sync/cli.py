@@ -1,5 +1,6 @@
 """Typer CLI."""
 
+import socket
 import sqlite3
 import traceback
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from efactura_sync.anaf.oauth import (
 )
 from efactura_sync.config import Config, load_config
 from efactura_sync.errors import AuthError
+from efactura_sync.mail import Mailer, render_failure_email
 from efactura_sync.render import PdfRenderer
 from efactura_sync.storage.db import (
     add_monitored_cui,
@@ -333,13 +335,17 @@ def sync_run_cmd(
 
     archive_root = cfg.archive_root
 
+    cui_in_progress: str | None = None
+    step: str | None = None
     try:
         with httpx.Client() as http:
             anaf = AnafClient(http=http, env=env_typed)
             renderer = PdfRenderer(http=http, env=env_typed)
             for m in monitored:
+                cui_in_progress = m.cui
                 conn = _open_db(ctx)
                 try:
+                    step = "auth"
                     tok = load_token(cli_ctx.tokens_dir, cui=m.cui, env=env)
                     if needs_refresh(tok, now=now):
                         tok = refresh_access_token(
@@ -359,6 +365,7 @@ def sync_run_cmd(
                         db=conn,
                         archive_root=archive_root,
                     )
+                    step = "sync"
                     result = run_for_cui(
                         deps,
                         my_cui=m.cui,
@@ -372,13 +379,32 @@ def sync_run_cmd(
                     )
                 finally:
                     conn.close()
-    except Exception:
-        # NOTE(mail-deferred): when mail.py lands, wrap this in a Mailer.send
-        # of a render_failure_email() per spec §6.5. For now, surface the
-        # traceback to stderr and exit non-zero so cron alerts.
+    except Exception as exc:
         typer.echo("sync run failed:", err=True)
         traceback.print_exc()
-        raise typer.Exit(code=1) from None
+        try:
+            failure_mailer = Mailer(
+                host=cfg.smtp.host,
+                port=cfg.smtp.port,
+                tls=cfg.smtp.tls,
+                username=cfg.smtp.username,
+                password=cfg.smtp.password,
+                from_addr=cfg.smtp.from_addr,
+            )
+            email = render_failure_email(
+                hostname=socket.gethostname(),
+                run_date=now.date(),
+                cui_in_progress=cui_in_progress,
+                step=step,
+                exception_type=type(exc).__name__,
+                log_tail=str(exc),
+                traceback=traceback.format_exc(),
+            )
+            failure_mailer.send(email, to_addr=cfg.smtp.error_to_addr)
+        except Exception:
+            # Notification failed too — already logged the original traceback above.
+            typer.echo("failure-email send failed (see traceback above)", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("status")

@@ -1,9 +1,14 @@
 from datetime import date
 from decimal import Decimal
+from email import message_from_bytes
+from typing import Any
+
+import pytest
 
 from efactura_sync.anaf.messages import InvoiceFields, ListMessage
 from efactura_sync.mail import (
     EmailMessage,
+    Mailer,
     render_erori_email,
     render_failure_email,
     render_mesaj_email,
@@ -127,3 +132,95 @@ def test_render_failure_email() -> None:
     assert "descarcare" in email.body
     assert "TransientError" in email.body
     assert email.attachments == [("traceback.txt", b"Traceback (most recent call last):\n...")]
+
+
+class _RecordingSMTP:
+    """Stand-in for smtplib.SMTP_SSL / SMTP that records what was sent."""
+
+    instances: list[_RecordingSMTP] = []
+
+    def __init__(self, host: str, port: int, *args: Any, **kwargs: Any) -> None:
+        self.host = host
+        self.port = port
+        self.logged_in: tuple[str, str] | None = None
+        self.starttls_called = False
+        self.sent: list[tuple[str, list[str], bytes]] = []
+        self.quit_called = False
+        type(self).instances.append(self)
+
+    def login(self, username: str, password: str) -> None:
+        self.logged_in = (username, password)
+
+    def starttls(self) -> None:
+        self.starttls_called = True
+
+    def sendmail(self, from_addr: str, to_addrs: list[str], msg: bytes) -> None:
+        self.sent.append((from_addr, to_addrs, msg))
+
+    def quit(self) -> None:
+        self.quit_called = True
+
+    def __enter__(self) -> _RecordingSMTP:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.quit()
+
+
+def test_mailer_sends_with_implicit_tls(monkeypatch: pytest.MonkeyPatch) -> None:
+    _RecordingSMTP.instances.clear()
+    monkeypatch.setattr("smtplib.SMTP_SSL", _RecordingSMTP)
+
+    mailer = Mailer(
+        host="smtp.example.com",
+        port=465,
+        tls="implicit",
+        username="u",
+        password="p",
+        from_addr="from@example.com",
+    )
+    mailer.send(
+        EmailMessage(
+            subject="Test",
+            body="hi",
+            message_id="<1@efactura-sync>",
+            attachments=[("a.txt", b"hello")],
+        ),
+        to_addr="to@example.com",
+    )
+
+    [smtp] = _RecordingSMTP.instances
+    assert smtp.host == "smtp.example.com"
+    assert smtp.port == 465
+    assert smtp.logged_in == ("u", "p")
+    assert smtp.starttls_called is False
+    [(frm, tos, raw)] = smtp.sent
+    assert frm == "from@example.com"
+    assert tos == ["to@example.com"]
+    parsed = message_from_bytes(raw)
+    assert parsed["Subject"] == "Test"
+    assert parsed["Message-ID"] == "<1@efactura-sync>"
+    payloads = parsed.get_payload()
+    assert any(p.get_filename() == "a.txt" for p in payloads)
+
+
+def test_mailer_starttls(monkeypatch: pytest.MonkeyPatch) -> None:
+    _RecordingSMTP.instances.clear()
+    monkeypatch.setattr("smtplib.SMTP", _RecordingSMTP)
+
+    mailer = Mailer(
+        host="smtp.example.com",
+        port=587,
+        tls="starttls",
+        username="u",
+        password="p",
+        from_addr="from@example.com",
+    )
+    mailer.send(
+        EmailMessage(subject="x", body="y", message_id="<2@efactura-sync>", attachments=[]),
+        to_addr="to@example.com",
+    )
+
+    [smtp] = _RecordingSMTP.instances
+    assert smtp.port == 587
+    assert smtp.starttls_called is True

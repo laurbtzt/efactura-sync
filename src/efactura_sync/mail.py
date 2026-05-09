@@ -5,8 +5,11 @@ This module is split in two layers:
   * The :class:`Mailer` class owns the SMTP connection and side-effects.
 """
 
+import smtplib
 from dataclasses import dataclass, field
 from datetime import date
+from email.message import EmailMessage as _StdlibEmailMessage
+from typing import Literal
 
 from efactura_sync.anaf.messages import InvoiceFields, ListMessage
 from efactura_sync.types import Env
@@ -177,3 +180,50 @@ def render_failure_email(
         message_id=f"<failure-{run_date.isoformat()}-{hostname}@efactura-sync>",
         attachments=[("traceback.txt", traceback.encode("utf-8"))],
     )
+
+
+class Mailer:
+    """SMTP sender. One connection per :meth:`send` call (callers may reuse)."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        tls: Literal["implicit", "starttls"],
+        username: str,
+        password: str,
+        from_addr: str,
+    ) -> None:
+        self._host = host
+        self._port = port
+        self._tls = tls
+        self._username = username
+        self._password = password
+        self._from = from_addr
+
+    def _connect(self) -> smtplib.SMTP:
+        if self._tls == "implicit":
+            return smtplib.SMTP_SSL(self._host, self._port)
+        return smtplib.SMTP(self._host, self._port)
+
+    def send(self, msg: EmailMessage, *, to_addr: str) -> None:
+        std = _StdlibEmailMessage()
+        std["Subject"] = msg.subject
+        std["From"] = self._from
+        std["To"] = to_addr
+        std["Message-ID"] = msg.message_id
+        std.set_content(msg.body, charset="utf-8")
+        for filename, data in msg.attachments:
+            std.add_attachment(
+                data,
+                maintype="application",
+                subtype="octet-stream",
+                filename=filename,
+            )
+
+        with self._connect() as smtp:
+            if self._tls == "starttls":
+                smtp.starttls()
+            smtp.login(self._username, self._password)
+            smtp.sendmail(self._from, [to_addr], std.as_bytes())

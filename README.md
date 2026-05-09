@@ -1,8 +1,6 @@
 # efactura-sync
 
-Daily archival sync for Romanian ANAF e-Factura SPV. Read-only — pulls invoices and messages, never uploads. Files are archived locally; PDF rendering goes through ANAF's hosted `xmltopdf` service.
-
-> **v1 status:** archive + dedup + PDF render are working end-to-end. **Email notifications are not yet wired up** — rows that *would* be emailed are flagged in SQLite as `email_skip_reason='mail_pending_v1'` and will be backfilled once the mail module lands. See [Status](#status) below.
+Daily archival sync for Romanian ANAF e-Factura SPV. Read-only — pulls invoices and messages, never uploads. Files are archived locally; PDF rendering goes through ANAF's hosted `xmltopdf` service. Notifications go out as Romanian-language emails over SMTP.
 
 See the design spec at [`docs/superpowers/specs/2026-05-04-efactura-sync-design.md`](docs/superpowers/specs/2026-05-04-efactura-sync-design.md) and the implementation plan at [`docs/superpowers/plans/2026-05-04-efactura-sync.md`](docs/superpowers/plans/2026-05-04-efactura-sync.md).
 
@@ -38,7 +36,7 @@ default_env = "prod"
 level = "INFO"
 ```
 
-> The `[smtp]` section is required by the loader even though mail is deferred — it's validated at startup. Provide real values; they will be exercised once the mail module ships.
+> The `[smtp]` section is validated at startup and used at runtime: per-message notifications go to `to_addr`, run-failure notifications to `error_to_addr` (defaults to `to_addr` if omitted).
 
 `~/.config/efactura-sync/secrets.toml` (chmod 0600):
 
@@ -90,12 +88,13 @@ Schedule via cron once daily (example, 03:00 local):
 0 3 * * * /usr/bin/env -S /home/youruser/.local/bin/uv run --project /home/youruser/efactura-sync efactura-sync sync run --env prod
 ```
 
-What `sync run` does today:
+What `sync run` does:
 - Lists new ANAF messages per monitored CUI (clamped to 60 days, with a 1-day safety overlap).
 - Downloads each new message's signed ZIP and writes it atomically into the archive tree.
 - For PRIMITA / TRIMISA invoices, extracts the UBL XML, renders a PDF via ANAF's `xmltopdf` endpoint, and writes it next to the ZIP.
 - Records every message in SQLite (`state.db`) with deduplication on `(msg_id, cui, env)`.
-- Marks the email decision per spec rules in `email_skip_reason`. **No email is actually sent in v1**; PRIMITA-from-tracked-supplier and ERORI/MESAJ rows get `mail_pending_v1`, TRIMISA gets `never_email_for_type`, untracked PRIMITA gets `filtered_by_track_list`.
+- Sends a Romanian-language email per spec rules: PRIMITA from a tracked supplier (ZIP + PDF), ERORI / MESAJ (ZIP). TRIMISA never emails (`email_skip_reason='never_email_for_type'`). PRIMITA from an untracked supplier is filtered (`'filtered_by_track_list'`). On send failure, `last_error` is set and the resume pass retries on the next run.
+- Sends a single failure-notification email to `[smtp].error_to_addr` if any uncaught exception escapes the per-CUI loop.
 - Advances `poll_state.last_polled_at` after both phases complete.
 
 ## Inspecting state
@@ -136,11 +135,12 @@ Path partitioning uses the **invoice issue date** (Bucharest local) for invoices
 | OAuth bootstrap (laptop with cert) + 90-day refresh | ✅ |
 | Per-CUI run with resume of pending rows + poll | ✅ |
 | CLI: `auth`, `cui`, `track`, `sync`, `status`, `replay` | ✅ |
-| **Email notification rendering (Romanian)** | ⏳ deferred to v1.1 |
-| **SMTP `Mailer` (implicit TLS / STARTTLS)** | ⏳ deferred to v1.1 |
-| **Failure-notification email on uncaught exceptions** | ⏳ deferred to v1.1 |
+| Email notification rendering (Romanian) | ✅ |
+| SMTP `Mailer` (implicit TLS / STARTTLS) | ✅ |
+| Per-message email send for new rows | ✅ |
+| Failure-notification email on uncaught exceptions | ✅ |
 
-When the deferred items land, the orchestrator's `_email_decision` will be revisited so `mail_pending_v1` rows actually render and send. The two terminal-skip reasons (`never_email_for_type`, `filtered_by_track_list`) stay correct as written.
+Existing rows tagged `email_skip_reason='mail_pending_v1'` from earlier builds are not backfilled automatically — drain them via `efactura-sync replay <msg_id> --cui <cui> --env <env>` to re-process individually.
 
 ## Tests
 

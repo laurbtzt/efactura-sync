@@ -9,6 +9,7 @@ import pytest
 
 from efactura_sync.anaf.messages import ListMessage
 from efactura_sync.errors import RenderError
+from efactura_sync.mail import EmailMessage
 from efactura_sync.storage.db import (
     add_monitored_cui,
     add_tracked_counterparty,
@@ -20,6 +21,17 @@ from efactura_sync.storage.files import FileStore
 from efactura_sync.sync import RunResult, SyncDeps, process_one_message, run_for_cui
 
 # --- fakes ----------------------------------------------------------------
+
+
+class RecordingMailer:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.sent: list[tuple[EmailMessage, str]] = []
+
+    def send(self, msg: EmailMessage, *, to_addr: str) -> None:
+        if self.fail:
+            raise RuntimeError("smtp down")
+        self.sent.append((msg, to_addr))
 
 
 class FakeAnaf:
@@ -68,6 +80,8 @@ def deps(db: sqlite3.Connection, archive_root: Path) -> SyncDeps:
         files=FileStore(),
         db=db,
         archive_root=archive_root,
+        mailer=RecordingMailer(),
+        to_addr="me@example.com",
     )
 
 
@@ -109,6 +123,7 @@ def test_primita_tracked_supplier_archives_and_marks_pending(
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -119,8 +134,14 @@ def test_primita_tracked_supplier_archives_and_marks_pending(
     assert row is not None
     assert row.zip_path is not None
     assert row.pdf_path is not None
-    assert row.email_skip_reason == "mail_pending_v1"
-    assert row.email_sent_at is None
+    assert row.email_skip_reason is None
+    assert row.email_sent_at is not None
+    sent = deps.mailer.sent  # type: ignore[attr-defined]
+    assert len(sent) == 1
+    email, to_addr = sent[0]
+    assert to_addr == "me@example.com"
+    assert email.subject.startswith("[factură]")
+    assert "Acme" in email.subject
 
 
 def test_primita_untracked_supplier_archives_but_filters_email(
@@ -133,6 +154,7 @@ def test_primita_untracked_supplier_archives_but_filters_email(
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -154,6 +176,7 @@ def test_trimisa_archives_renders_pdf_and_marks_never_email(
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(tip_raw="FACTURA TRIMISA", tip="TRIMISA"),
@@ -174,6 +197,7 @@ def test_erori_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: d
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(tip_raw="ERORI FACTURA", tip="ERORI"),
@@ -185,7 +209,10 @@ def test_erori_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: d
     assert row.zip_path is not None
     assert "messages/" in row.zip_path
     assert row.pdf_path is None
-    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_skip_reason is None
+    assert row.email_sent_at is not None
+    [(email, _)] = deps.mailer.sent  # type: ignore[attr-defined]
+    assert email.subject.startswith("[eroare]")
 
 
 def test_mesaj_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: datetime) -> None:
@@ -195,6 +222,7 @@ def test_mesaj_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: d
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(tip_raw="MESAJ_CUMPARATOR", tip="MESAJ"),
@@ -205,7 +233,10 @@ def test_mesaj_archives_to_messages_and_marks_pending(deps: SyncDeps, now_utc: d
     assert row is not None
     assert row.zip_path is not None
     assert row.pdf_path is None
-    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_skip_reason is None
+    assert row.email_sent_at is not None
+    [(email, _)] = deps.mailer.sent  # type: ignore[attr-defined]
+    assert email.subject.startswith("[notificare]")
 
 
 def test_pdf_render_failure_records_error_and_marks_pending(
@@ -219,6 +250,7 @@ def test_pdf_render_failure_records_error_and_marks_pending(
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -246,6 +278,7 @@ def test_process_one_message_is_idempotent_on_reentry(deps: SyncDeps, now_utc: d
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -255,6 +288,7 @@ def test_process_one_message_is_idempotent_on_reentry(deps: SyncDeps, now_utc: d
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -264,7 +298,9 @@ def test_process_one_message_is_idempotent_on_reentry(deps: SyncDeps, now_utc: d
     assert deps.anaf.download_calls == ["3001"]  # type: ignore[attr-defined]
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
-    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_sent_at is not None
+    # Idempotent: second invocation must NOT re-send.
+    assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]
 
 
 def test_process_one_message_parse_failure_records_error(deps: SyncDeps, now_utc: datetime) -> None:
@@ -277,6 +313,7 @@ def test_process_one_message_parse_failure_records_error(deps: SyncDeps, now_utc
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -307,6 +344,7 @@ def test_process_one_message_download_failure_records_error(
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -320,23 +358,19 @@ def test_process_one_message_download_failure_records_error(
     assert row.email_skip_reason is None
 
 
-def test_primita_with_null_counterparty_marks_pending_not_filtered(
+def test_primita_with_null_counterparty_filters_email_as_untracked(
     deps: SyncDeps, now_utc: datetime
 ) -> None:
-    """A PRIMITA whose UBL has no supplier CUI must NOT be filtered as untracked."""
+    """A PRIMITA whose UBL has no supplier CUI can't be allow-list-checked, so skip."""
     # Build a UBL fixture with the supplier CompanyID stripped out.
-    no_supplier_xml = UBL_FIXTURE.replace(
-        b"<cbc:CompanyID>RO87654321</cbc:CompanyID>", b""
-    ).replace(
-        b"<cbc:RegistrationName>Furnizor X SRL</cbc:RegistrationName>",
-        b"<cbc:RegistrationName>Furnizor X SRL</cbc:RegistrationName>",
-    )
+    no_supplier_xml = UBL_FIXTURE.replace(b"<cbc:CompanyID>RO87654321</cbc:CompanyID>", b"")
     deps.anaf.download_payload = _make_zip(no_supplier_xml)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
 
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
@@ -345,9 +379,10 @@ def test_primita_with_null_counterparty_marks_pending_not_filtered(
 
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
-    # supplier_cui couldn't be parsed -> defensive default is mail_pending_v1, not filtered.
     assert row.counterparty_cui is None
-    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_sent_at is None
+    assert deps.mailer.sent == []  # type: ignore[attr-defined]
 
 
 def test_run_for_cui_polls_and_processes(deps: SyncDeps, now_utc: datetime) -> None:
@@ -394,26 +429,27 @@ def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc: 
     process_one_message(
         deps,
         my_cui="12345678",
+        my_display_name="Acme",
         env="prod",
         access_token="tok",
         list_msg=_list_msg(),
         now=now_utc,
     )
-    # Simulate "crash before email decision" by clearing email_skip_reason.
-    # email_skip_reason='mail_pending_v1' is the deferred-mail equivalent of
-    # email_sent_at; clearing it simulates a row that crashed before the email
-    # decision step.
-    deps.db.execute("UPDATE synced_messages SET email_skip_reason=NULL WHERE msg_id='3001'")
+    # Simulate "crash before email step" by clearing email_sent_at so the row is
+    # again a pending candidate for the resume pass.
+    deps.db.execute("UPDATE synced_messages SET email_sent_at=NULL WHERE msg_id='3001'")
     deps.db.commit()
+    deps.mailer.sent.clear()  # type: ignore[attr-defined]
 
     result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
 
-    # The pending row was finished (email decision marked).
+    # The pending row was finished (email re-sent).
     assert result.processed >= 1
     assert result.failures == 0
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
-    assert row.email_skip_reason == "mail_pending_v1"
+    assert row.email_sent_at is not None
+    assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]
 
 
 def test_run_for_cui_records_poll_state_on_success(deps: SyncDeps, now_utc: datetime) -> None:
@@ -511,9 +547,48 @@ def test_run_for_cui_idempotent_on_quick_rerun(deps: SyncDeps, now_utc: datetime
     assert len(deps.anaf.list_calls) == 2  # type: ignore[attr-defined]
     # But the message was downloaded only once (second run sees the dedup row).
     assert deps.anaf.download_calls == ["3001"]  # type: ignore[attr-defined]
-    # Both report processed=1 (resume re-marks the row's email decision idempotently;
-    # since email_skip_reason is already set on r2, process_one_message no-ops).
+    # r1 sent the email; r2 sees email_sent_at is set and process_one_message
+    # no-ops the email step rather than re-sending.
     assert r1.processed == 1
     assert r1.failures == 0
     assert r2.processed >= 0
     assert r2.failures == 0
+    assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]
+
+
+def test_email_send_failure_records_error_and_leaves_row_pending(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    """When mailer.send raises, last_error is set and email_sent_at stays NULL."""
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    deps.mailer = RecordingMailer(fail=True)  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+
+    process_one_message(
+        deps,
+        my_cui="12345678",
+        my_display_name=None,
+        env="prod",
+        access_token="tok",
+        list_msg=_list_msg(),
+        now=now_utc,
+    )
+
+    row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row is not None
+    assert row.zip_path is not None
+    assert row.pdf_path is not None  # render succeeded
+    assert row.email_sent_at is None
+    assert row.email_skip_reason is None
+    assert row.last_error is not None and row.last_error.startswith("email:")
+
+    # Resume pass should retry the email step. Swap the mailer to a healthy one.
+    deps.mailer = RecordingMailer(fail=False)  # type: ignore[assignment]
+    deps.anaf = FakeAnaf(list_response=[])  # type: ignore[assignment]
+    run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
+
+    row2 = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
+    assert row2 is not None
+    assert row2.email_sent_at is not None
+    assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]

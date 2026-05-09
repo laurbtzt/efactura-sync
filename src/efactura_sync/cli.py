@@ -338,6 +338,14 @@ def sync_run_cmd(
     cui_in_progress: str | None = None
     step: str | None = None
     try:
+        mailer = Mailer(
+            host=cfg.smtp.host,
+            port=cfg.smtp.port,
+            tls=cfg.smtp.tls,
+            username=cfg.smtp.username,
+            password=cfg.smtp.password,
+            from_addr=cfg.smtp.from_addr,
+        )
         with httpx.Client() as http:
             anaf = AnafClient(http=http, env=env_typed)
             renderer = PdfRenderer(http=http, env=env_typed)
@@ -364,6 +372,8 @@ def sync_run_cmd(
                         files=FileStore(),
                         db=conn,
                         archive_root=archive_root,
+                        mailer=mailer,
+                        to_addr=cfg.smtp.to_addr,
                     )
                     step = "sync"
                     result = run_for_cui(

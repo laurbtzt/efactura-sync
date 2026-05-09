@@ -4,14 +4,10 @@ Walks each ANAF message through these steps:
   1. insert ledger row
   2. download ZIP -> atomic write
   3. (invoices only) extract UBL XML, render PDF -> atomic write
-  4. apply email rules -> mark email_skip_reason
+  4. apply email rules -> render + send (or mark a terminal skip reason)
 
 Each step's success is recorded on a column of ``synced_messages``; a crash
 mid-step leaves a column NULL that the next run finishes.
-
-NOTE: mail.py is deferred. Step 4 currently records ``email_skip_reason``
-values without actually sending email. Rows that "would email" are tagged
-``mail_pending_v1`` so a future task can backfill them.
 """
 
 import logging
@@ -31,6 +27,12 @@ from efactura_sync.anaf.messages import (
     parse_invoice_fields,
 )
 from efactura_sync.errors import EfacturaError, InvalidArchiveError, RenderError
+from efactura_sync.mail import (
+    EmailMessage,
+    render_erori_email,
+    render_mesaj_email,
+    render_primita_email,
+)
 from efactura_sync.storage import db as dbq
 from efactura_sync.storage.files import FileStore
 from efactura_sync.storage.layout import (
@@ -53,6 +55,10 @@ class _RendererLike(Protocol):
     def render(self, *, ubl_xml: bytes, standard: str = "FACT1") -> bytes: ...
 
 
+class _MailerLike(Protocol):
+    def send(self, msg: EmailMessage, *, to_addr: str) -> None: ...
+
+
 @dataclass
 class SyncDeps:
     anaf: _AnafLike
@@ -60,6 +66,8 @@ class SyncDeps:
     files: FileStore
     db: sqlite3.Connection
     archive_root: Path
+    mailer: _MailerLike
+    to_addr: str
 
 
 # ---- helpers --------------------------------------------------------------
@@ -77,30 +85,29 @@ def _resolve_partition_date(list_msg: ListMessage, fields: InvoiceFields | None)
 
 def _email_decision(
     deps: SyncDeps, *, my_cui: str, list_msg: ListMessage, counterparty_cui: str | None
-) -> str:
-    """Return the email_skip_reason for this row.
+) -> str | None:
+    """Return ``None`` when the row should be emailed, else the terminal skip reason.
 
     Per spec §6:
       PRIMITA -> only email if supplier in tracked_counterparties[my_cui], else
-                 'filtered_by_track_list'.
-      TRIMISA -> never email; 'never_email_for_type'.
+                 ``'filtered_by_track_list'``. PRIMITA without a parsed
+                 supplier_cui can't be allow-list-checked, so it's also
+                 ``'filtered_by_track_list'``.
+      TRIMISA -> never email; ``'never_email_for_type'``.
       ERORI / MESAJ -> always email.
-
-    Mail is deferred (Task 16/17). All "would email" outcomes return
-    ``'mail_pending_v1'`` for now so a future backfill pass can pick them up.
     """
     if list_msg.tip == "TRIMISA":
         return "never_email_for_type"
     if list_msg.tip == "PRIMITA":
         if counterparty_cui is None:
-            return "mail_pending_v1"
+            return "filtered_by_track_list"
         if not dbq.is_counterparty_tracked(
             deps.db, my_cui=my_cui, counterparty_cui=counterparty_cui
         ):
             return "filtered_by_track_list"
-        return "mail_pending_v1"
-    # ERORI / MESAJ
-    return "mail_pending_v1"
+        return None  # send PRIMITA email
+    # ERORI / MESAJ — always email.
+    return None
 
 
 # ---- main orchestrator ----------------------------------------------------
@@ -110,6 +117,7 @@ def process_one_message(
     deps: SyncDeps,
     *,
     my_cui: str,
+    my_display_name: str | None,
     env: Env,
     access_token: str,
     list_msg: ListMessage,
@@ -253,12 +261,13 @@ def process_one_message(
                 error=f"render: {e}",
                 now=now,
             )
-            # TODO(mail-revisit): when mail.py lands, spec §6.3 says PRIMITA should
-            # still email with ZIP-only on RenderError. Today (mail deferred) we
-            # return early so the row stays pending and the next run retries render.
-            return  # don't mark email step until render succeeds
+            # Don't mark email step until render succeeds. Spec §6.3 allows
+            # ZIP-only PRIMITA email on render failure; we keep it tighter for
+            # now and let the resume path retry render. If render keeps
+            # failing, manual intervention via /replay is needed.
+            return
 
-    # 6. email decision (mail deferred; record skip reason)
+    # 6. email decision: skip with a terminal reason or render + send.
     row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
     assert row is not None
     if row.email_sent_at is not None or row.email_skip_reason is not None:
@@ -270,13 +279,74 @@ def process_one_message(
         list_msg=list_msg,
         counterparty_cui=row.counterparty_cui,
     )
-    dbq.mark_email_skipped(
+    if skip_reason is not None:
+        dbq.mark_email_skipped(
+            deps.db,
+            msg_id=list_msg.msg_id,
+            cui=my_cui,
+            env=env,
+            reason=skip_reason,
+            now=now,
+        )
+        return
+
+    assert row.zip_path is not None
+    zip_path_abs = deps.archive_root / row.zip_path
+    zip_attachment = (Path(row.zip_path).name, zip_path_abs.read_bytes())
+
+    if list_msg.tip == "PRIMITA":
+        pdf_attachment: tuple[str, bytes] | None = None
+        if row.pdf_path is not None:
+            pdf_path_abs = deps.archive_root / row.pdf_path
+            pdf_attachment = (Path(row.pdf_path).name, pdf_path_abs.read_bytes())
+        assert fields is not None  # PRIMITA went through XML parse step
+        email = render_primita_email(
+            my_cui=my_cui,
+            my_display_name=my_display_name,
+            list_msg=list_msg,
+            fields=fields,
+            zip_attachment=zip_attachment,
+            pdf_attachment=pdf_attachment,
+            env=env,
+        )
+    elif list_msg.tip == "ERORI":
+        email = render_erori_email(
+            my_cui=my_cui,
+            my_display_name=my_display_name,
+            list_msg=list_msg,
+            zip_attachment=zip_attachment,
+            env=env,
+        )
+    elif list_msg.tip == "MESAJ":
+        email = render_mesaj_email(
+            my_cui=my_cui,
+            my_display_name=my_display_name,
+            list_msg=list_msg,
+            zip_attachment=zip_attachment,
+            env=env,
+        )
+    else:
+        # TRIMISA always returns a skip reason from _email_decision; can't reach here.
+        raise AssertionError(f"unexpected tip in send branch: {list_msg.tip!r}")
+
+    try:
+        deps.mailer.send(email, to_addr=deps.to_addr)
+    except Exception as e:
+        dbq.update_attempt(
+            deps.db,
+            msg_id=list_msg.msg_id,
+            cui=my_cui,
+            env=env,
+            error=f"email: {e}",
+            now=now,
+        )
+        return
+    dbq.mark_email_sent(
         deps.db,
         msg_id=list_msg.msg_id,
         cui=my_cui,
         env=env,
-        reason=skip_reason,
-        now=now,
+        sent_at=now,
     )
 
 
@@ -321,6 +391,7 @@ def run_for_cui(
     _log.info("starting run cui=%s env=%s", my_cui, env)
     processed = 0
     failures = 0
+    my_display_name = dbq.get_monitored_cui_display_name(deps.db, cui=my_cui)
 
     # Resume pass: re-process pending rows. We rebuild a synthetic ListMessage
     # from each pending row so process_one_message can drive its state machine.
@@ -345,6 +416,7 @@ def run_for_cui(
             process_one_message(
                 deps,
                 my_cui=my_cui,
+                my_display_name=my_display_name,
                 env=env,
                 access_token=access_token,
                 list_msg=list_msg,
@@ -375,6 +447,7 @@ def run_for_cui(
             process_one_message(
                 deps,
                 my_cui=my_cui,
+                my_display_name=my_display_name,
                 env=env,
                 access_token=access_token,
                 list_msg=msg,

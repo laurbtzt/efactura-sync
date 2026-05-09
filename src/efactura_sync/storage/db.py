@@ -123,6 +123,12 @@ def add_monitored_cui(
     conn.commit()
 
 
+def get_monitored_cui_display_name(conn: sqlite3.Connection, *, cui: str) -> str | None:
+    """Return ``display_name`` for one monitored CUI, or ``None`` if not present/null."""
+    row = conn.execute("SELECT display_name FROM monitored_cuis WHERE cui = ?", (cui,)).fetchone()
+    return row[0] if row else None
+
+
 def list_monitored_cuis(conn: sqlite3.Connection) -> list[MonitoredCui]:
     rows = conn.execute(
         "SELECT cui, display_name, added_at FROM monitored_cuis ORDER BY cui"

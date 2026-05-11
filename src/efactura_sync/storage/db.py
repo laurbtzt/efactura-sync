@@ -78,8 +78,10 @@ CREATE INDEX IF NOT EXISTS idx_msg_pending
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create all tables and indexes if they don't exist. Idempotent."""
-    conn.execute("PRAGMA foreign_keys = ON;")
+    """Create all tables and indexes if they don't exist. Idempotent.
+
+    ``PRAGMA foreign_keys`` is set by :func:`connect`, not here.
+    """
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
 
@@ -115,8 +117,7 @@ def add_monitored_cui(
         INSERT INTO monitored_cuis(cui, display_name, added_at)
         VALUES (?, ?, ?)
         ON CONFLICT(cui) DO UPDATE SET
-            display_name = excluded.display_name,
-            added_at     = excluded.added_at
+            display_name = excluded.display_name
         """,
         (cui, display_name, _iso(now)),
     )

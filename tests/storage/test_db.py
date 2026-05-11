@@ -94,7 +94,8 @@ def test_add_monitored_cui_is_idempotent_on_conflict(
 
     [c] = list_monitored_cuis(db)
     assert c.display_name == "Acme Updated"
-    assert c.added_at == later  # upsert overwrites
+    # added_at is preserved across re-adds; only display_name is updated.
+    assert c.added_at == now_utc
 
 
 def test_remove_monitored_cui(db: sqlite3.Connection, now_utc: datetime) -> None:
@@ -308,20 +309,12 @@ def test_find_pending_rows_returns_only_unfinished(
     assert pending == {"B", "C"}
 
 
-def test_init_schema_sets_foreign_keys_pragma_on_fresh_connection(tmp_path) -> None:
-    """`init_schema` must turn FK enforcement on for the connection it receives."""
-    db_path = tmp_path / "scratch.db"
-    # Use raw sqlite3.connect (NOT our connect() helper) to prove init_schema is
-    # the one turning on the pragma, independent of the helper.
-    raw = sqlite3.connect(db_path)
-    init_schema(raw)
-    [(fk_on,)] = raw.execute("PRAGMA foreign_keys").fetchall()
-    assert fk_on == 1
-    raw.close()
-
-
 def test_connect_helper_sets_foreign_keys(tmp_path) -> None:
-    """Our connect() helper must enable foreign keys."""
+    """Our connect() helper must enable foreign keys.
+
+    FK enforcement is per-connection in SQLite, so this MUST be set by every
+    code path that hands out a connection. The helper is the single owner.
+    """
     db_path = tmp_path / "scratch2.db"
     conn = connect(db_path)
     [(fk_on,)] = conn.execute("PRAGMA foreign_keys").fetchall()

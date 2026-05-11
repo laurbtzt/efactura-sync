@@ -153,7 +153,8 @@ def process_one_message(
 
     # 2. download ZIP if we don't have one yet
     row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"row vanished after insert: msg_id={list_msg.msg_id}")
     if row.zip_path is None:
         try:
             zip_bytes = deps.anaf.download(msg_id=list_msg.msg_id, access_token=access_token)
@@ -227,12 +228,16 @@ def process_one_message(
             now=now,
         )
         row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
-        assert row is not None
+        if row is None:
+            raise RuntimeError(f"row vanished after finalize_zip_write: msg_id={list_msg.msg_id}")
 
     # 5. render PDF for invoices (if not already done)
     if list_msg.tip in ("PRIMITA", "TRIMISA") and row.pdf_path is None:
         try:
-            assert ubl_xml is not None
+            if ubl_xml is None:
+                raise RuntimeError(
+                    f"ubl_xml missing for invoice render: msg_id={list_msg.msg_id}"
+                )
             pdf_bytes = deps.renderer.render(ubl_xml=ubl_xml)
             invoice_type2: Literal["PRIMITA", "TRIMISA"] = list_msg.tip
             pdf_target = invoice_pdf_path(
@@ -269,7 +274,8 @@ def process_one_message(
 
     # 6. email decision: skip with a terminal reason or render + send.
     row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
-    assert row is not None
+    if row is None:
+        raise RuntimeError(f"row vanished before email step: msg_id={list_msg.msg_id}")
     if row.email_sent_at is not None or row.email_skip_reason is not None:
         return
 
@@ -290,7 +296,8 @@ def process_one_message(
         )
         return
 
-    assert row.zip_path is not None
+    if row.zip_path is None:
+        raise RuntimeError(f"zip_path missing before email send: msg_id={list_msg.msg_id}")
     zip_path_abs = deps.archive_root / row.zip_path
     zip_attachment = (Path(row.zip_path).name, zip_path_abs.read_bytes())
 
@@ -299,7 +306,8 @@ def process_one_message(
         if row.pdf_path is not None:
             pdf_path_abs = deps.archive_root / row.pdf_path
             pdf_attachment = (Path(row.pdf_path).name, pdf_path_abs.read_bytes())
-        assert fields is not None  # PRIMITA went through XML parse step
+        if fields is None:
+            raise RuntimeError(f"fields missing for PRIMITA email: msg_id={list_msg.msg_id}")
         email = render_primita_email(
             my_cui=my_cui,
             my_display_name=my_display_name,

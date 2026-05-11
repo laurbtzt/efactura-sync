@@ -124,7 +124,8 @@ def _validate_env(env: str) -> Env:
 
 def _ctx(ctx: typer.Context) -> _CliContext:
     obj = ctx.obj
-    assert isinstance(obj, _CliContext)
+    if not isinstance(obj, _CliContext):
+        raise RuntimeError(f"typer context not initialized: got {type(obj).__name__}")
     return obj
 
 
@@ -311,48 +312,44 @@ def sync_run_cmd(
     conn = _open_db(ctx)
     try:
         monitored = list_monitored_cuis(conn)
-    finally:
-        conn.close()
 
-    if cui is not None:
-        matched = [m for m in monitored if m.cui == cui]
-        if not matched:
-            typer.echo(
-                f"cui {cui!r} is not monitored; use 'cui add' first",
-                err=True,
-            )
-            raise typer.Exit(code=2)
-        monitored = matched
+        if cui is not None:
+            matched = [m for m in monitored if m.cui == cui]
+            if not matched:
+                typer.echo(
+                    f"cui {cui!r} is not monitored; use 'cui add' first",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+            monitored = matched
 
-    if not monitored:
-        typer.echo("no monitored CUIs to sync")
-        return
+        if not monitored:
+            typer.echo("no monitored CUIs to sync")
+            return
 
-    if dry_run:
-        for m in monitored:
-            typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
-        return
-
-    archive_root = cfg.archive_root
-
-    cui_in_progress: str | None = None
-    step: str | None = None
-    try:
-        mailer = Mailer(
-            host=cfg.smtp.host,
-            port=cfg.smtp.port,
-            tls=cfg.smtp.tls,
-            username=cfg.smtp.username,
-            password=cfg.smtp.password,
-            from_addr=cfg.smtp.from_addr,
-        )
-        with httpx.Client() as http:
-            anaf = AnafClient(http=http, env=env_typed)
-            renderer = PdfRenderer(http=http, env=env_typed)
+        if dry_run:
             for m in monitored:
-                cui_in_progress = m.cui
-                conn = _open_db(ctx)
-                try:
+                typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
+            return
+
+        archive_root = cfg.archive_root
+
+        cui_in_progress: str | None = None
+        step: str | None = None
+        try:
+            mailer = Mailer(
+                host=cfg.smtp.host,
+                port=cfg.smtp.port,
+                tls=cfg.smtp.tls,
+                username=cfg.smtp.username,
+                password=cfg.smtp.password,
+                from_addr=cfg.smtp.from_addr,
+            )
+            with httpx.Client() as http:
+                anaf = AnafClient(http=http, env=env_typed)
+                renderer = PdfRenderer(http=http, env=env_typed)
+                for m in monitored:
+                    cui_in_progress = m.cui
                     step = "auth"
                     tok = load_token(cli_ctx.tokens_dir, cui=m.cui, env=env)
                     if needs_refresh(tok, now=now):
@@ -387,34 +384,38 @@ def sync_run_cmd(
                         f"cui={m.cui} env={env_typed} "
                         f"processed={result.processed} failures={result.failures}"
                     )
-                finally:
-                    conn.close()
-    except Exception as exc:
-        typer.echo("sync run failed:", err=True)
-        traceback.print_exc()
-        try:
-            failure_mailer = Mailer(
-                host=cfg.smtp.host,
-                port=cfg.smtp.port,
-                tls=cfg.smtp.tls,
-                username=cfg.smtp.username,
-                password=cfg.smtp.password,
-                from_addr=cfg.smtp.from_addr,
-            )
-            email = render_failure_email(
-                hostname=socket.gethostname(),
-                run_date=now.date(),
-                cui_in_progress=cui_in_progress,
-                step=step,
-                exception_type=type(exc).__name__,
-                log_tail=str(exc),
-                traceback=traceback.format_exc(),
-            )
-            failure_mailer.send(email, to_addr=cfg.smtp.error_to_addr)
-        except Exception:
-            # Notification failed too — already logged the original traceback above.
-            typer.echo("failure-email send failed (see traceback above)", err=True)
-        raise typer.Exit(code=1) from exc
+        except Exception as exc:
+            typer.echo("sync run failed:", err=True)
+            traceback.print_exc()
+            try:
+                failure_mailer = Mailer(
+                    host=cfg.smtp.host,
+                    port=cfg.smtp.port,
+                    tls=cfg.smtp.tls,
+                    username=cfg.smtp.username,
+                    password=cfg.smtp.password,
+                    from_addr=cfg.smtp.from_addr,
+                )
+                email = render_failure_email(
+                    hostname=socket.gethostname(),
+                    run_date=now.date(),
+                    cui_in_progress=cui_in_progress,
+                    step=step,
+                    exception_type=type(exc).__name__,
+                    log_tail=str(exc),
+                    traceback_text=traceback.format_exc(),
+                )
+                failure_mailer.send(email, to_addr=cfg.smtp.error_to_addr)
+            except Exception as mail_exc:
+                # Notification failed too — log the secondary failure; the original
+                # traceback is already on stderr above.
+                typer.echo(
+                    f"failure-email send failed: {type(mail_exc).__name__}: {mail_exc}",
+                    err=True,
+                )
+            raise typer.Exit(code=1) from exc
+    finally:
+        conn.close()
 
 
 @app.command("status")
@@ -439,7 +440,7 @@ def status_cmd(
                 tok_str = f"expires {tok.expires_at.isoformat()}"
                 if needs_refresh(tok, now=now):
                     tok_str += " (refresh due!)"
-            except AuthError, FileNotFoundError:
+            except (AuthError, FileNotFoundError):
                 tok_str = "no token"
 
             state = get_poll_state(conn, cui=c.cui, env=env_typed)

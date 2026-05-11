@@ -33,7 +33,8 @@ class PdfRenderer:
             timeout=30.0,
         )
         if resp.status_code != 200:
-            raise RenderError(f"xmltopdf returned HTTP {resp.status_code}: {resp.text[:200]}")
+            snippet = resp.content[:200].decode("utf-8", "replace")
+            raise RenderError(f"xmltopdf returned HTTP {resp.status_code}: {snippet}")
         if not resp.content.startswith(b"%PDF"):
             raise RenderError("xmltopdf response is not a PDF")
         return resp.content

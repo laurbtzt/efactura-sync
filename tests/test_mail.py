@@ -123,7 +123,7 @@ def test_render_failure_email() -> None:
         step="descarcare",
         exception_type="TransientError",
         log_tail="line1\nline2",
-        traceback="Traceback (most recent call last):\n...",
+        traceback_text="Traceback (most recent call last):\n...",
     )
     assert email.subject.startswith("[eroare-rulare]")
     assert "homepi" in email.subject

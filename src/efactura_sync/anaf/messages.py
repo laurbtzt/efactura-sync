@@ -114,7 +114,8 @@ def extract_ubl_xml(zip_bytes: bytes) -> bytes:
             data = zf.read(name)
             try:
                 root = etree.fromstring(data, _PARSER)
-            except etree.XMLSyntaxError:
+            except etree.XMLSyntaxError as e:
+                _log.debug("skipping malformed XML member %r: %s", name, e)
                 continue
             if root.tag == f"{{{NS['ubl']}}}Invoice":
                 return data

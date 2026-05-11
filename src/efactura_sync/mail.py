@@ -159,7 +159,7 @@ def render_failure_email(
     step: str | None,
     exception_type: str,
     log_tail: str,
-    traceback: str,
+    traceback_text: str,
 ) -> EmailMessage:
     subject = f"[eroare-rulare] efactura-sync — {run_date.isoformat()} — {hostname}"
     body = (
@@ -178,12 +178,17 @@ def render_failure_email(
         subject=subject,
         body=body,
         message_id=f"<failure-{run_date.isoformat()}-{hostname}@efactura-sync>",
-        attachments=[("traceback.txt", traceback.encode("utf-8"))],
+        attachments=[("traceback.txt", traceback_text.encode("utf-8"))],
     )
 
 
 class Mailer:
-    """SMTP sender. One connection per :meth:`send` call (callers may reuse)."""
+    """SMTP sender. Opens a fresh connection per :meth:`send` call.
+
+    A new SMTP session is established (and torn down) for every message. This
+    is simpler and more reliable than long-lived connections; for the daily
+    sync volume the per-send overhead is negligible.
+    """
 
     def __init__(
         self,

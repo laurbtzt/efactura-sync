@@ -1,5 +1,7 @@
 """HTTP wrapper for the read-side ANAF e-Factura endpoints."""
 
+import json
+
 import httpx
 
 from efactura_sync import USER_AGENT
@@ -59,7 +61,14 @@ class AnafClient:
             timeout=30.0,
         )
         _classify(resp)
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except (ValueError, json.JSONDecodeError) as e:
+            raise PermanentError(
+                f"listamesaje returned non-JSON payload: {e}",
+                status=resp.status_code,
+                body=resp.content,
+            ) from e
         if not isinstance(payload, dict):
             raise PermanentError(
                 "listamesaje returned non-dict payload",

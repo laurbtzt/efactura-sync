@@ -5,6 +5,7 @@ in a later task). Refresh and load/save are usable on the headless server.
 """
 
 import json
+import logging
 import os
 import secrets as _secrets
 import urllib.parse
@@ -19,6 +20,8 @@ import httpx
 from efactura_sync import USER_AGENT
 from efactura_sync.errors import AuthError, RefreshTokenExpired
 from efactura_sync.types import Env
+
+_log = logging.getLogger(__name__)
 
 _TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
 _AUTHORIZE_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
@@ -47,6 +50,7 @@ def save_token(tokens_dir: Path, token: Token) -> None:
         "obtained_at": token.obtained_at.isoformat().replace("+00:00", "Z"),
     }
     partial = p.with_name(p.name + ".partial")
+    # Mode 0o600 set at open() — preserved by os.replace, no chmod needed.
     fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.write(fd, json.dumps(payload, indent=2).encode("utf-8"))
@@ -54,7 +58,15 @@ def save_token(tokens_dir: Path, token: Token) -> None:
     finally:
         os.close(fd)
     os.replace(partial, p)
-    os.chmod(p, 0o600)
+    # fsync the parent directory so the rename is durable on power loss.
+    try:
+        dir_fd = os.open(p.parent, os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def load_token(tokens_dir: Path, *, cui: str, env: str) -> Token:
@@ -112,13 +124,15 @@ def refresh_access_token(
     if resp.status_code == 400:
         try:
             err = (resp.json() or {}).get("error", "")
-        except Exception:
+        except (ValueError, json.JSONDecodeError):
             err = ""
+        snippet = resp.content[:200].decode("utf-8", "replace")
         if err == "invalid_grant":
-            raise RefreshTokenExpired(f"refresh failed (invalid_grant): {resp.text[:200]}")
-        raise AuthError(f"refresh failed (400, error={err!r}): {resp.text[:200]}")
+            raise RefreshTokenExpired(f"refresh failed (invalid_grant): {snippet}")
+        raise AuthError(f"refresh failed (400, error={err!r}): {snippet}")
     if resp.status_code != 200:
-        raise AuthError(f"refresh failed (HTTP {resp.status_code}): {resp.text[:200]}")
+        snippet = resp.content[:200].decode("utf-8", "replace")
+        raise AuthError(f"refresh failed (HTTP {resp.status_code}): {snippet}")
     body = resp.json()
     expires_in = int(body.get("expires_in", 0))
     return Token(
@@ -199,10 +213,9 @@ def auth_code_login(
 
     opened = webbrowser.open(auth_url)
     if not opened:
-        print(
-            f"Could not open the browser automatically.\n"
-            f"Open this URL manually to complete authorization:\n{auth_url}",
-            flush=True,
+        _log.warning(
+            "could not open browser automatically; open this URL manually: %s",
+            auth_url,
         )
 
     server.timeout = timeout_seconds
@@ -234,7 +247,8 @@ def auth_code_login(
         timeout=30.0,
     )
     if resp.status_code != 200:
-        raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {resp.text[:200]}")
+        snippet = resp.content[:200].decode("utf-8", "replace")
+        raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {snippet}")
     body = resp.json()
     expires_in = int(body.get("expires_in", 0))
     return Token(

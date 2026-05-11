@@ -19,6 +19,18 @@ class FileStore:
         finally:
             os.close(fd)
         os.replace(partial, target)
+        # fsync the parent directory so the rename itself is durable on
+        # power loss — without this, the file contents survive but the
+        # directory entry can be lost. Best-effort: some filesystems
+        # (e.g. on Windows) raise PermissionError on O_DIRECTORY.
+        try:
+            dir_fd = os.open(target.parent, os.O_DIRECTORY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
     def sweep_partials(self, root: Path, *, older_than: timedelta) -> list[Path]:
         if not root.exists():

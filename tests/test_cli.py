@@ -691,3 +691,25 @@ class TestXdgBaseDir:
         result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
 
         assert result == target
+
+    def test_default_config_dir_matches_fallback_when_unset(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """When XDG_CONFIG_HOME is unset, _xdg_config_home() returns ~/.config."""
+        from efactura_sync.cli import _xdg_config_home
+
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert _xdg_config_home() == tmp_path / ".config"
+
+    def test_default_data_dir_matches_fallback_when_unset(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """When XDG_DATA_HOME is unset, _xdg_data_home() returns ~/.local/share."""
+        from efactura_sync.cli import _xdg_data_home
+
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert _xdg_data_home() == tmp_path / ".local" / "share"

@@ -73,7 +73,8 @@ def _xdg_data_home() -> Path:
     return _xdg_base_dir("XDG_DATA_HOME", (".local", "share"))
 
 
-_DEFAULT_CONFIG_DIR = Path.home() / ".config" / "efactura-sync"
+_DEFAULT_CONFIG_DIR = _xdg_config_home() / "efactura-sync"
+_DEFAULT_DATA_DIR = _xdg_data_home() / "efactura-sync"
 _OPT_CONFIG = typer.Option(
     _DEFAULT_CONFIG_DIR / "config.toml",
     "--config",
@@ -90,7 +91,7 @@ _OPT_TOKENS_DIR = typer.Option(
     help="Directory holding per-CUI OAuth token files.",
 )
 _OPT_DB = typer.Option(
-    Path.home() / ".local" / "share" / "efactura-sync" / "state.db",
+    _DEFAULT_DATA_DIR / "state.db",
     "--db",
     help="Path to SQLite state database.",
 )

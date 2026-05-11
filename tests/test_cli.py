@@ -643,3 +643,51 @@ def test_sync_run_sends_failure_email_on_uncaught_exception(
     msg, to_addr = sent[0]
     assert "[eroare-rulare]" in msg.subject  # type: ignore[attr-defined]
     assert "kaboom" in msg.body or "RuntimeError" in msg.body  # type: ignore[attr-defined]
+
+
+# --- XDG base directory helpers ------------------------------------------
+
+
+class TestXdgBaseDir:
+    """Unit tests for the XDG base-directory resolution helper."""
+
+    def test_unset_env_returns_home_fallback(self, monkeypatch, tmp_path) -> None:
+        from efactura_sync.cli import _xdg_base_dir
+
+        monkeypatch.delenv("FAKE_XDG_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
+
+        assert result == tmp_path / ".config"
+
+    def test_empty_env_returns_home_fallback(self, monkeypatch, tmp_path) -> None:
+        from efactura_sync.cli import _xdg_base_dir
+
+        monkeypatch.setenv("FAKE_XDG_HOME", "")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        result = _xdg_base_dir("FAKE_XDG_HOME", (".local", "share"))
+
+        assert result == tmp_path / ".local" / "share"
+
+    def test_relative_env_is_ignored_per_spec(self, monkeypatch, tmp_path) -> None:
+        """Per XDG spec: relative paths MUST be ignored."""
+        from efactura_sync.cli import _xdg_base_dir
+
+        monkeypatch.setenv("FAKE_XDG_HOME", "relative/not-absolute")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
+
+        assert result == tmp_path / ".config"
+
+    def test_absolute_env_is_used_verbatim(self, monkeypatch, tmp_path) -> None:
+        from efactura_sync.cli import _xdg_base_dir
+
+        target = tmp_path / "custom" / "xdg"
+        monkeypatch.setenv("FAKE_XDG_HOME", str(target))
+
+        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
+
+        assert result == target

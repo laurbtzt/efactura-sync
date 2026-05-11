@@ -1,5 +1,6 @@
 """Typer CLI."""
 
+import os
 import socket
 import sqlite3
 import traceback
@@ -48,6 +49,29 @@ sync_app = typer.Typer(no_args_is_help=True, help="Run the daily sync.")
 app.add_typer(cui_app, name="cui")
 app.add_typer(track_app, name="track")
 app.add_typer(sync_app, name="sync")
+
+def _xdg_base_dir(env_var: str, fallback_subpath: tuple[str, ...]) -> Path:
+    """Resolve an XDG base directory per the spec.
+
+    Returns ``$<env_var>`` if it is set, non-empty, and absolute. Otherwise
+    returns ``Path.home().joinpath(*fallback_subpath)``. Relative values are
+    ignored per the XDG Base Directory Specification.
+    """
+    raw = os.environ.get(env_var, "")
+    if raw:
+        candidate = Path(raw)
+        if candidate.is_absolute():
+            return candidate
+    return Path.home().joinpath(*fallback_subpath)
+
+
+def _xdg_config_home() -> Path:
+    return _xdg_base_dir("XDG_CONFIG_HOME", (".config",))
+
+
+def _xdg_data_home() -> Path:
+    return _xdg_base_dir("XDG_DATA_HOME", (".local", "share"))
+
 
 _DEFAULT_CONFIG_DIR = Path.home() / ".config" / "efactura-sync"
 _OPT_CONFIG = typer.Option(

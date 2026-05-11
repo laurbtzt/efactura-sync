@@ -58,6 +58,30 @@ client_secret = "from-anaf-portal-test"
 chmod 600 ~/.config/efactura-sync/secrets.toml
 ```
 
+## Configuration paths
+
+By default, `efactura-sync` follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
+
+| What | Default location |
+|---|---|
+| `config.toml`, `secrets.toml`, `tokens/` | `${XDG_CONFIG_HOME:-$HOME/.config}/efactura-sync/` |
+| `state.db` | `${XDG_DATA_HOME:-$HOME/.local/share}/efactura-sync/` |
+
+To put configuration somewhere else, set the relevant env var before running the CLI:
+
+```bash
+XDG_CONFIG_HOME="$HOME/.dotfiles/config" uv run efactura-sync status
+```
+
+Per the XDG spec, the env var must be an **absolute** path; empty or relative values are ignored and the `$HOME`-based fallback is used.
+
+For one-off overrides, the following flags take precedence over the XDG defaults on every command:
+
+- `--config <path>` — path to `config.toml`
+- `--secrets <path>` — path to `secrets.toml`
+- `--tokens-dir <path>` — directory holding per-CUI OAuth token files
+- `--db <path>` — path to the SQLite state database
+
 ## Onboard a CUI
 
 On the **laptop** (digital cert plugged in):

@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS monitored_cuis (
   added_at       TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tracked_counterparties (
+CREATE TABLE IF NOT EXISTS watched_counterparties (
   my_cui            TEXT NOT NULL,
   counterparty_cui  TEXT NOT NULL,
   added_at          TEXT NOT NULL,
@@ -140,7 +140,7 @@ def list_monitored_cuis(conn: sqlite3.Connection) -> list[MonitoredCui]:
 def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
     """Remove a monitored CUI and all rows that reference it.
 
-    `tracked_counterparties` cascades automatically via FK; `poll_state`
+    `watched_counterparties` cascades automatically via FK; `poll_state`
     and `synced_messages` have no FK so we delete them explicitly.
     """
     conn.execute("DELETE FROM synced_messages WHERE cui = ?", (cui,))
@@ -149,7 +149,7 @@ def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
     conn.commit()
 
 
-def add_tracked_counterparty(
+def add_watched_counterparty(
     conn: sqlite3.Connection,
     *,
     my_cui: str,
@@ -158,7 +158,7 @@ def add_tracked_counterparty(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO tracked_counterparties(my_cui, counterparty_cui, added_at)
+        INSERT INTO watched_counterparties(my_cui, counterparty_cui, added_at)
         VALUES (?, ?, ?)
         ON CONFLICT(my_cui, counterparty_cui) DO NOTHING
         """,
@@ -167,11 +167,11 @@ def add_tracked_counterparty(
     conn.commit()
 
 
-def list_tracked_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
+def list_watched_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
     rows = conn.execute(
         """
         SELECT counterparty_cui
-        FROM tracked_counterparties
+        FROM watched_counterparties
         WHERE my_cui = ?
         ORDER BY counterparty_cui
         """,
@@ -180,21 +180,21 @@ def list_tracked_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> lis
     return [r[0] for r in rows]
 
 
-def is_counterparty_tracked(
+def is_counterparty_watched(
     conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
 ) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        "SELECT 1 FROM watched_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
         (my_cui, counterparty_cui),
     ).fetchone()
     return row is not None
 
 
-def remove_tracked_counterparty(
+def remove_watched_counterparty(
     conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
 ) -> None:
     conn.execute(
-        "DELETE FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        "DELETE FROM watched_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
         (my_cui, counterparty_cui),
     )
     conn.commit()

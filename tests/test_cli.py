@@ -14,7 +14,7 @@ from efactura_sync.storage.db import (
     list_monitored_cuis as _list_monitored_cuis,
 )
 from efactura_sync.storage.db import (
-    list_tracked_counterparties as _list_tracked_counterparties,
+    list_watched_counterparties as _list_watched_counterparties,
 )
 
 runner = CliRunner()
@@ -43,7 +43,7 @@ def test_top_level_help() -> None:
     assert result.exit_code == 0
     assert "auth" in result.stdout
     assert "cui" in result.stdout
-    assert "track" in result.stdout
+    assert "watch" in result.stdout
     assert "sync" in result.stdout
 
 
@@ -285,53 +285,53 @@ def test_cui_list_empty(tmp_path: Path) -> None:
     assert "no monitored CUIs" in result.stdout
 
 
-def test_track_add_list_remove(tmp_path: Path) -> None:
+def test_watch_add_list_remove(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     # Register the parent monitored CUI first.
     runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
 
     r1 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["track", "add", "RO111", "--cui", "12345678"],
+        _cli_args(tmp_path, db_path) + ["watch", "add", "RO111", "--cui", "12345678"],
     )
     assert r1.exit_code == 0, r1.stdout
 
-    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["track", "list", "--cui", "12345678"])
+    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["watch", "list", "--cui", "12345678"])
     assert r2.exit_code == 0, r2.stdout
     assert "RO111" in r2.stdout
 
     r3 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["track", "remove", "RO111", "--cui", "12345678"],
+        _cli_args(tmp_path, db_path) + ["watch", "remove", "RO111", "--cui", "12345678"],
     )
     assert r3.exit_code == 0, r3.stdout
 
     conn = _sqlite3.connect(db_path)
     _init_schema(conn)
     try:
-        assert _list_tracked_counterparties(conn, my_cui="12345678") == []
+        assert _list_watched_counterparties(conn, my_cui="12345678") == []
     finally:
         conn.close()
 
 
-def test_track_add_without_parent_cui_fails(tmp_path: Path) -> None:
-    """track add requires the parent monitored CUI to exist first (FK constraint)."""
+def test_watch_add_without_parent_cui_fails(tmp_path: Path) -> None:
+    """watch add requires the parent monitored CUI to exist first (FK constraint)."""
     db_path = tmp_path / "state.db"
     result = runner.invoke(
         app,
         _cli_args(tmp_path, db_path)
-        + ["track", "add", "RO111", "--cui", "12345678"],  # 12345678 not added
+        + ["watch", "add", "RO111", "--cui", "12345678"],  # 12345678 not added
     )
     assert result.exit_code != 0
 
 
-def test_cui_remove_cascades_to_tracked(tmp_path: Path) -> None:
-    """`cui remove` should also remove rows in tracked_counterparties (FK CASCADE)."""
+def test_cui_remove_cascades_to_watched(tmp_path: Path) -> None:
+    """`cui remove` should also remove rows in watched_counterparties (FK CASCADE)."""
     db_path = tmp_path / "state.db"
     runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
     runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["track", "add", "RO111", "--cui", "12345678"],
+        _cli_args(tmp_path, db_path) + ["watch", "add", "RO111", "--cui", "12345678"],
     )
 
     runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "remove", "12345678"])
@@ -339,9 +339,9 @@ def test_cui_remove_cascades_to_tracked(tmp_path: Path) -> None:
     conn = _sqlite3.connect(db_path)
     _init_schema(conn)
     try:
-        # Both monitored CUI and its tracked counterparty are gone.
+        # Both monitored CUI and its watched counterparty are gone.
         assert _list_monitored_cuis(conn) == []
-        assert _list_tracked_counterparties(conn, my_cui="12345678") == []
+        assert _list_watched_counterparties(conn, my_cui="12345678") == []
     finally:
         conn.close()
 

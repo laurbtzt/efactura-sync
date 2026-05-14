@@ -89,10 +89,10 @@ def _email_decision(
     """Return ``None`` when the row should be emailed, else the terminal skip reason.
 
     Per spec §6:
-      PRIMITA -> only email if supplier in tracked_counterparties[my_cui], else
-                 ``'filtered_by_track_list'``. PRIMITA without a parsed
+      PRIMITA -> only email if supplier in watched_counterparties[my_cui], else
+                 ``'filtered_by_watchlist'``. PRIMITA without a parsed
                  supplier_cui can't be allow-list-checked, so it's also
-                 ``'filtered_by_track_list'``.
+                 ``'filtered_by_watchlist'``.
       TRIMISA -> never email; ``'never_email_for_type'``.
       ERORI / MESAJ -> always email.
     """
@@ -100,11 +100,11 @@ def _email_decision(
         return "never_email_for_type"
     if list_msg.tip == "PRIMITA":
         if counterparty_cui is None:
-            return "filtered_by_track_list"
-        if not dbq.is_counterparty_tracked(
+            return "filtered_by_watchlist"
+        if not dbq.is_counterparty_watched(
             deps.db, my_cui=my_cui, counterparty_cui=counterparty_cui
         ):
-            return "filtered_by_track_list"
+            return "filtered_by_watchlist"
         return None  # send PRIMITA email
     # ERORI / MESAJ — always email.
     return None

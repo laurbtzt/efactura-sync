@@ -12,7 +12,7 @@ from efactura_sync.errors import RenderError
 from efactura_sync.mail import EmailMessage
 from efactura_sync.storage.db import (
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     get_synced_message,
     init_schema,
     upsert_poll_state,
@@ -113,12 +113,12 @@ def _list_msg(**overrides: Any) -> ListMessage:
 # --- tests ----------------------------------------------------------------
 
 
-def test_primita_tracked_supplier_archives_and_marks_pending(
+def test_primita_watched_supplier_archives_and_marks_pending(
     deps: SyncDeps, now_utc: datetime
 ) -> None:
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name="Acme", now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,
@@ -144,12 +144,12 @@ def test_primita_tracked_supplier_archives_and_marks_pending(
     assert "Acme" in email.subject
 
 
-def test_primita_untracked_supplier_archives_but_filters_email(
+def test_primita_unwatched_supplier_archives_but_filters_email(
     deps: SyncDeps, now_utc: datetime
 ) -> None:
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    # NOTE: no tracked counterparty added.
+    # NOTE: no watched counterparty added.
 
     process_one_message(
         deps,
@@ -163,7 +163,7 @@ def test_primita_untracked_supplier_archives_but_filters_email(
 
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
-    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_skip_reason == "filtered_by_watchlist"
     assert row.email_sent_at is None
 
 
@@ -245,7 +245,7 @@ def test_pdf_render_failure_records_error_and_marks_pending(
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     deps.renderer = FakeRenderer(fail=True)  # type: ignore[assignment]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,
@@ -273,7 +273,7 @@ def test_process_one_message_is_idempotent_on_reentry(deps: SyncDeps, now_utc: d
     """Calling twice with the same list_msg downloads + emails-decides only once."""
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,
@@ -358,7 +358,7 @@ def test_process_one_message_download_failure_records_error(
     assert row.email_skip_reason is None
 
 
-def test_primita_with_null_counterparty_filters_email_as_untracked(
+def test_primita_with_null_counterparty_filters_email_as_unwatched(
     deps: SyncDeps, now_utc: datetime
 ) -> None:
     """A PRIMITA whose UBL has no supplier CUI can't be allow-list-checked, so skip."""
@@ -380,7 +380,7 @@ def test_primita_with_null_counterparty_filters_email_as_untracked(
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
     assert row.counterparty_cui is None
-    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_skip_reason == "filtered_by_watchlist"
     assert row.email_sent_at is None
     assert deps.mailer.sent == []  # type: ignore[attr-defined]
 
@@ -391,7 +391,7 @@ def test_run_for_cui_polls_and_processes(deps: SyncDeps, now_utc: datetime) -> N
         download_payload=_make_zip(UBL_FIXTURE),
     )
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
 
@@ -424,7 +424,7 @@ def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc: 
         download_payload=_make_zip(UBL_FIXTURE),
     )
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
     # Pre-populate a row that has been processed once already.
     process_one_message(
         deps,
@@ -532,7 +532,7 @@ def test_run_for_cui_idempotent_on_quick_rerun(deps: SyncDeps, now_utc: datetime
         download_payload=_make_zip(UBL_FIXTURE),
     )
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     r1 = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
     r2 = run_for_cui(
@@ -563,7 +563,7 @@ def test_email_send_failure_records_error_and_leaves_row_pending(
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     deps.mailer = RecordingMailer(fail=True)  # type: ignore[assignment]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,

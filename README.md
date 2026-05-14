@@ -97,7 +97,7 @@ scp ~/.config/efactura-sync/tokens/12345678.prod.json server:~/.config/efactura-
 Add suppliers to the email allow-list (used by PRIMITA email gating once mail is wired):
 
 ```bash
-uv run efactura-sync track add RO87654321 --cui 12345678
+uv run efactura-sync watch add RO87654321 --cui 12345678
 ```
 
 ## Daily run (server)
@@ -117,7 +117,7 @@ What `sync run` does:
 - Downloads each new message's signed ZIP and writes it atomically into the archive tree.
 - For PRIMITA / TRIMISA invoices, extracts the UBL XML, renders a PDF via ANAF's `xmltopdf` endpoint, and writes it next to the ZIP.
 - Records every message in SQLite (`state.db`) with deduplication on `(msg_id, cui, env)`.
-- Sends a Romanian-language email per spec rules: PRIMITA from a tracked supplier (ZIP + PDF), ERORI / MESAJ (ZIP). TRIMISA never emails (`email_skip_reason='never_email_for_type'`). PRIMITA from an untracked supplier is filtered (`'filtered_by_track_list'`). On send failure, `last_error` is set and the resume pass retries on the next run.
+- Sends a Romanian-language email per spec rules: PRIMITA from a watched supplier (ZIP + PDF), ERORI / MESAJ (ZIP). TRIMISA never emails (`email_skip_reason='never_email_for_type'`). PRIMITA from an unwatched supplier is filtered (`'filtered_by_watchlist'`). On send failure, `last_error` is set and the resume pass retries on the next run.
 - Sends a single failure-notification email to `[smtp].error_to_addr` if any uncaught exception escapes the per-CUI loop.
 - Advances `poll_state.last_polled_at` after both phases complete.
 
@@ -158,7 +158,7 @@ Path partitioning uses the **invoice issue date** (Bucharest local) for invoices
 | PDF rendering via ANAF's `xmltopdf` | ✅ |
 | OAuth bootstrap (laptop with cert) + 90-day refresh | ✅ |
 | Per-CUI run with resume of pending rows + poll | ✅ |
-| CLI: `auth`, `cui`, `track`, `sync`, `status`, `replay` | ✅ |
+| CLI: `auth`, `cui`, `watch`, `sync`, `status`, `replay` | ✅ |
 | Email notification rendering (Romanian) | ✅ |
 | SMTP `Mailer` (implicit TLS / STARTTLS) | ✅ |
 | Per-message email send for new rows | ✅ |

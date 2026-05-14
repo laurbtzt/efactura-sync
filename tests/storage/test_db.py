@@ -11,20 +11,20 @@ from efactura_sync.storage.db import (
     _iso,
     _parse_iso,
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     connect,
     find_pending_rows,
     get_poll_state,
     get_synced_message,
     init_schema,
     insert_synced_message,
-    is_counterparty_tracked,
+    is_counterparty_watched,
     list_monitored_cuis,
-    list_tracked_counterparties,
+    list_watched_counterparties,
     mark_email_sent,
     mark_email_skipped,
     remove_monitored_cui,
-    remove_tracked_counterparty,
+    remove_watched_counterparty,
     update_attempt,
     update_pdf_path,
     update_zip_path,
@@ -42,7 +42,7 @@ def test_init_schema_is_idempotent(db: sqlite3.Connection) -> None:
         "monitored_cuis",
         "poll_state",
         "synced_messages",
-        "tracked_counterparties",
+        "watched_counterparties",
     ]
 
 
@@ -55,7 +55,7 @@ def test_indexes_exist(db: sqlite3.Connection) -> None:
     assert {"idx_msg_cui", "idx_msg_pending"}.issubset(names)
 
 
-def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
+def test_foreign_key_cascade_drops_watched_when_monitored_cui_removed(
     db: sqlite3.Connection,
 ) -> None:
     init_schema(db)
@@ -64,7 +64,7 @@ def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
         ("12345678", "Acme", "2026-05-04T10:00:00Z"),
     )
     db.execute(
-        "INSERT INTO tracked_counterparties(my_cui, counterparty_cui, added_at) VALUES (?,?,?)",
+        "INSERT INTO watched_counterparties(my_cui, counterparty_cui, added_at) VALUES (?,?,?)",
         ("12345678", "RO111", "2026-05-04T10:00:00Z"),
     )
     db.commit()
@@ -72,7 +72,7 @@ def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
     db.execute("DELETE FROM monitored_cuis WHERE cui = ?", ("12345678",))
     db.commit()
 
-    n = db.execute("SELECT count(*) FROM tracked_counterparties").fetchone()[0]
+    n = db.execute("SELECT count(*) FROM watched_counterparties").fetchone()[0]
     assert n == 0
 
 
@@ -129,26 +129,26 @@ def test_remove_monitored_cui_also_deletes_synced_messages(db, now_utc) -> None:
     assert get_synced_message(db, msg_id="B", cui="12345678", env="prod") is None
 
 
-def test_track_add_list_remove(db: sqlite3.Connection, now_utc: datetime) -> None:
+def test_watch_add_list_remove(db: sqlite3.Connection, now_utc: datetime) -> None:
     init_schema(db)
     add_monitored_cui(db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
-    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO222", now=now_utc)
+    add_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
+    add_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO222", now=now_utc)
 
-    assert sorted(list_tracked_counterparties(db, my_cui="12345678")) == ["RO111", "RO222"]
-    assert is_counterparty_tracked(db, my_cui="12345678", counterparty_cui="RO111") is True
-    assert is_counterparty_tracked(db, my_cui="12345678", counterparty_cui="UNKNOWN") is False
+    assert sorted(list_watched_counterparties(db, my_cui="12345678")) == ["RO111", "RO222"]
+    assert is_counterparty_watched(db, my_cui="12345678", counterparty_cui="RO111") is True
+    assert is_counterparty_watched(db, my_cui="12345678", counterparty_cui="UNKNOWN") is False
 
-    remove_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
-    assert list_tracked_counterparties(db, my_cui="12345678") == ["RO222"]
+    remove_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
+    assert list_watched_counterparties(db, my_cui="12345678") == ["RO222"]
 
 
-def test_add_tracked_counterparty_requires_existing_monitored_cui(
+def test_add_watched_counterparty_requires_existing_monitored_cui(
     db: sqlite3.Connection, now_utc: datetime
 ) -> None:
     init_schema(db)
     with pytest.raises(sqlite3.IntegrityError):  # FK violation
-        add_tracked_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
+        add_watched_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
 
 
 def test_iso_rejects_naive_datetime() -> None:
@@ -258,12 +258,12 @@ def test_mark_email_skipped_sets_reason(db: sqlite3.Connection, now_utc: datetim
         msg_id="3001",
         cui="12345678",
         env="prod",
-        reason="filtered_by_track_list",
+        reason="filtered_by_watchlist",
         now=now_utc,
     )
     row = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
     assert row is not None
-    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_skip_reason == "filtered_by_watchlist"
     assert row.email_sent_at is None
 
 
@@ -322,13 +322,13 @@ def test_connect_helper_sets_foreign_keys(tmp_path) -> None:
     conn.close()
 
 
-def test_remove_tracked_counterparty_does_not_touch_monitored_cui(db, now_utc) -> None:
-    """Cascade is one-way: deleting a tracked row must not touch the parent."""
+def test_remove_watched_counterparty_does_not_touch_monitored_cui(db, now_utc) -> None:
+    """Cascade is one-way: deleting a watched row must not touch the parent."""
     init_schema(db)
     add_monitored_cui(db, cui="12345678", display_name="Acme", now=now_utc)
-    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
+    add_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
 
-    remove_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
+    remove_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
 
     # Monitored CUI still present.
     cuis = list_monitored_cuis(db)

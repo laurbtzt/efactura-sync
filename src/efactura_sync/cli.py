@@ -26,14 +26,14 @@ from efactura_sync.mail import Mailer, render_failure_email
 from efactura_sync.render import PdfRenderer
 from efactura_sync.storage.db import (
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     find_pending_rows,
     get_poll_state,
     init_schema,
     list_monitored_cuis,
-    list_tracked_counterparties,
+    list_watched_counterparties,
     remove_monitored_cui,
-    remove_tracked_counterparty,
+    remove_watched_counterparty,
 )
 from efactura_sync.storage.db import connect as _db_connect
 from efactura_sync.storage.files import FileStore
@@ -44,10 +44,10 @@ app = typer.Typer(add_completion=False, no_args_is_help=True)
 auth_app = typer.Typer(no_args_is_help=True, help="OAuth token management.")
 app.add_typer(auth_app, name="auth")
 cui_app = typer.Typer(no_args_is_help=True, help="Manage monitored CUIs.")
-track_app = typer.Typer(no_args_is_help=True, help="Manage PRIMITA email allow-list.")
+watch_app = typer.Typer(no_args_is_help=True, help="Manage PRIMITA email watchlist.")
 sync_app = typer.Typer(no_args_is_help=True, help="Run the daily sync.")
 app.add_typer(cui_app, name="cui")
-app.add_typer(track_app, name="track")
+app.add_typer(watch_app, name="watch")
 app.add_typer(sync_app, name="sync")
 
 def _xdg_base_dir(env_var: str, fallback_subpath: tuple[str, ...]) -> Path:
@@ -101,11 +101,11 @@ _OPT_ENV = typer.Option("prod", "--env")
 
 _CUI_ARG = typer.Argument(..., help="Romanian fiscal identifier (CUI).")
 _NAME_OPT = typer.Option(None, "--name", help="Display name (used in email subjects later).")
-_TRACK_CUI_OPT = typer.Option(
-    ..., "--cui", help="The monitored CUI for which we track counterparties."
+_WATCH_CUI_OPT = typer.Option(
+    ..., "--cui", help="The monitored CUI for which we watch counterparties."
 )
 _COUNTERPARTY_ARG = typer.Argument(
-    ..., help="Counterparty (supplier) CUI to track for PRIMITA email."
+    ..., help="Counterparty (supplier) CUI to watch for PRIMITA email."
 )
 _OPT_CUI_FILTER = typer.Option(
     None, "--cui", help="Only run this CUI; default = all monitored CUIs."
@@ -259,7 +259,7 @@ def cui_list_cmd(ctx: typer.Context) -> None:
 
 @cui_app.command("remove")
 def cui_remove_cmd(ctx: typer.Context, cui: str = _CUI_ARG) -> None:
-    """Remove a monitored CUI and all its rows (poll_state, synced_messages, tracked)."""
+    """Remove a monitored CUI and all its rows (poll_state, synced_messages, watched)."""
     conn = _open_db(ctx)
     try:
         remove_monitored_cui(conn, cui=cui)
@@ -268,19 +268,19 @@ def cui_remove_cmd(ctx: typer.Context, cui: str = _CUI_ARG) -> None:
     typer.echo(f"OK — removed cui {cui}")
 
 
-# --- track subcommands ---
+# --- watch subcommands ---
 
 
-@track_app.command("add")
-def track_add_cmd(
+@watch_app.command("add")
+def watch_add_cmd(
     ctx: typer.Context,
     counterparty_cui: str = _COUNTERPARTY_ARG,
-    cui: str = _TRACK_CUI_OPT,
+    cui: str = _WATCH_CUI_OPT,
 ) -> None:
-    """Add a counterparty to the PRIMITA email allow-list for one monitored CUI."""
+    """Add a counterparty to the PRIMITA email watchlist for one monitored CUI."""
     conn = _open_db(ctx)
     try:
-        add_tracked_counterparty(
+        add_watched_counterparty(
             conn,
             my_cui=cui,
             counterparty_cui=counterparty_cui,
@@ -288,37 +288,37 @@ def track_add_cmd(
         )
     finally:
         conn.close()
-    typer.echo(f"OK — tracking {counterparty_cui} for cui {cui}")
+    typer.echo(f"OK — watching {counterparty_cui} for cui {cui}")
 
 
-@track_app.command("list")
-def track_list_cmd(ctx: typer.Context, cui: str = _TRACK_CUI_OPT) -> None:
-    """List tracked counterparties for one monitored CUI."""
+@watch_app.command("list")
+def watch_list_cmd(ctx: typer.Context, cui: str = _WATCH_CUI_OPT) -> None:
+    """List watched counterparties for one monitored CUI."""
     conn = _open_db(ctx)
     try:
-        rows = list_tracked_counterparties(conn, my_cui=cui)
+        rows = list_watched_counterparties(conn, my_cui=cui)
     finally:
         conn.close()
     if not rows:
-        typer.echo(f"(no tracked counterparties for cui {cui})")
+        typer.echo(f"(no watched counterparties for cui {cui})")
         return
     for c in rows:
         typer.echo(c)
 
 
-@track_app.command("remove")
-def track_remove_cmd(
+@watch_app.command("remove")
+def watch_remove_cmd(
     ctx: typer.Context,
     counterparty_cui: str = _COUNTERPARTY_ARG,
-    cui: str = _TRACK_CUI_OPT,
+    cui: str = _WATCH_CUI_OPT,
 ) -> None:
-    """Remove a counterparty from the PRIMITA email allow-list."""
+    """Remove a counterparty from the PRIMITA email watchlist."""
     conn = _open_db(ctx)
     try:
-        remove_tracked_counterparty(conn, my_cui=cui, counterparty_cui=counterparty_cui)
+        remove_watched_counterparty(conn, my_cui=cui, counterparty_cui=counterparty_cui)
     finally:
         conn.close()
-    typer.echo(f"OK — untracked {counterparty_cui} from cui {cui}")
+    typer.echo(f"OK — unwatched {counterparty_cui} for cui {cui}")
 
 
 # --- sync / status / replay ---
@@ -483,7 +483,7 @@ def status_cmd(
 def replay_cmd(
     ctx: typer.Context,
     msg_id: str = _REPLAY_MSG_ID_ARG,
-    cui: str = _TRACK_CUI_OPT,
+    cui: str = _WATCH_CUI_OPT,
     env: str = _OPT_ENV,
 ) -> None:
     """Clear step markers on one message so the next sync run re-processes it.

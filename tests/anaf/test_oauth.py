@@ -1,5 +1,3 @@
-import threading
-import urllib.request
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -8,7 +6,6 @@ import pytest
 
 from efactura_sync.anaf.oauth import (
     Token,
-    auth_code_login,
     load_token,
     needs_refresh,
     refresh_access_token,
@@ -274,80 +271,4 @@ def test_exchange_code_missing_code_raises() -> None:
             redirect_response="https://example.com/cb?state=S1",  # no code
             expected_state="S1",
             now=datetime(2026, 5, 4, tzinfo=UTC),
-        )
-
-
-def test_auth_code_login_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Simulate the browser hitting the local callback server with a code."""
-    captured_post: dict[str, object] = {}
-
-    def post_handler(request: httpx.Request) -> httpx.Response:
-        captured_post["body"] = request.content.decode()
-        return httpx.Response(
-            200,
-            json={
-                "access_token": "acc",
-                "refresh_token": "ref",
-                "expires_in": 7776000,
-                "token_type": "bearer",
-            },
-        )
-
-    http = httpx.Client(transport=httpx.MockTransport(post_handler))
-
-    # Stub webbrowser.open: hit the redirect_uri ourselves with a fake code.
-    def fake_open(url: str) -> bool:
-        import urllib.parse as up
-
-        q = up.parse_qs(up.urlparse(url).query)
-        redirect = q["redirect_uri"][0]
-        thread = threading.Thread(
-            target=lambda: urllib.request.urlopen(
-                f"{redirect}?code=fakecode&state={q['state'][0]}"
-            ).read()
-        )
-        thread.start()
-        return True
-
-    monkeypatch.setattr("webbrowser.open", fake_open)
-
-    now = datetime(2026, 5, 4, tzinfo=UTC)
-    token = auth_code_login(
-        http=http,
-        env="prod",
-        client_id="cid",
-        client_secret="cs",
-        cui="12345678",
-        now=now,
-    )
-    assert token.access_token == "acc"
-    assert token.cui == "12345678"
-    body = str(captured_post["body"])
-    assert "code=fakecode" in body
-    assert "grant_type=authorization_code" in body
-
-
-def test_auth_code_login_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If no callback arrives within timeout_seconds, raise AuthError."""
-    from efactura_sync.anaf.oauth import _CallbackHandler
-
-    # Defensive reset (class attrs may have been set by another test).
-    _CallbackHandler.code = None
-    _CallbackHandler.state = None
-
-    def post_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={})  # never reached
-
-    http = httpx.Client(transport=httpx.MockTransport(post_handler))
-    monkeypatch.setattr("webbrowser.open", lambda _url: True)
-
-    with pytest.raises(AuthError, match="timed out"):
-        auth_code_login(
-            http=http,
-            env="prod",
-            client_id="cid",
-            client_secret="cs",
-            cui="12345678",
-            now=datetime(2026, 5, 4, tzinfo=UTC),
-            timeout_seconds=1,  # 1 second so the test isn't slow
         )

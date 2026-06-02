@@ -1,7 +1,9 @@
-"""ANAF OAuth2: token persistence + refresh.
+"""ANAF OAuth2: token persistence + refresh + interactive login.
 
-The interactive authorization-code flow lives in :func:`auth_code_login` (added
-in a later task). Refresh and load/save are usable on the headless server.
+The interactive authorization-code flow is built from :func:`build_authorize_url`
+and :func:`exchange_code`: the operator opens the authorize URL in a browser,
+completes certificate auth, and pastes the resulting redirect URL back so the
+code can be exchanged. Refresh and load/save are usable on the headless server.
 """
 
 import json
@@ -9,10 +11,8 @@ import logging
 import os
 import secrets as _secrets
 import urllib.parse
-import webbrowser
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import httpx
@@ -230,122 +230,6 @@ def refresh_access_token(
         env=env,
         access_token=body["access_token"],
         refresh_token=body.get("refresh_token", refresh_token),
-        expires_at=now + timedelta(seconds=expires_in),
-        obtained_at=now,
-    )
-
-
-class _CallbackHandler(BaseHTTPRequestHandler):
-    """One-shot HTTP handler that captures the OAuth callback.
-
-    Class-level ``code``/``state`` attributes are a single-call communication
-    channel back to ``auth_code_login``. NOT safe for concurrent invocations;
-    v1 runs synchronously from a CLI on the operator's laptop.
-    """
-
-    code: str | None = None
-    state: str | None = None
-
-    def do_GET(self) -> None:  # noqa: N802
-        parsed = urllib.parse.urlparse(self.path)
-        params = urllib.parse.parse_qs(parsed.query)
-        code_values = params.get("code")
-        state_values = params.get("state")
-        type(self).code = code_values[0] if code_values else None
-        type(self).state = state_values[0] if state_values else None
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"<html><body>OK. You can close this tab.</body></html>")
-
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-        return  # silence access logs in tests
-
-
-def auth_code_login(
-    *,
-    http: httpx.Client,
-    env: Env,
-    client_id: str,
-    client_secret: str,
-    cui: str,
-    now: datetime,
-    bind_host: str = "127.0.0.1",
-    bind_port: int = 0,
-    timeout_seconds: int = 300,
-) -> Token:
-    """Run the OAuth2 authorization-code flow.
-
-    Opens the system browser at ANAF's authorize URL; ANAF prompts for the
-    qualified digital certificate; ANAF redirects back to this short-lived
-    local HTTP server with ``?code=...&state=...``. The code is exchanged for
-    a token at ANAF's ``/token`` endpoint.
-
-    The local callback uses HTTP on 127.0.0.1 per RFC 8252 §7.3 (loopback
-    redirect for native apps). The OS prevents off-host traffic on loopback,
-    so cleartext is acceptable here.
-
-    Must run on a host with a browser AND the cert plugged in.
-    """
-    state = _secrets.token_urlsafe(24)
-    server = HTTPServer((bind_host, bind_port), _CallbackHandler)
-    actual_port = server.server_address[1]
-    redirect_uri = f"http://{bind_host}:{actual_port}/callback"
-
-    auth_url = f"{_AUTHORIZE_URL}?" + urllib.parse.urlencode(
-        {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "state": state,
-        }
-    )
-
-    opened = webbrowser.open(auth_url)
-    if not opened:
-        _log.warning(
-            "could not open browser automatically; open this URL manually: %s",
-            auth_url,
-        )
-
-    server.timeout = timeout_seconds
-    try:
-        server.handle_request()
-    finally:
-        server.server_close()
-
-    if _CallbackHandler.code is None and _CallbackHandler.state is None:
-        raise AuthError(f"timed out waiting for ANAF callback ({timeout_seconds}s)")
-    if not _CallbackHandler.code:
-        raise AuthError("no code received from ANAF callback")
-    if _CallbackHandler.state != state:
-        raise AuthError("state mismatch on ANAF callback")
-    code = _CallbackHandler.code
-    _CallbackHandler.code = None
-    _CallbackHandler.state = None
-
-    resp = http.post(
-        _TOKEN_URL,
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": client_id,
-            "client_secret": client_secret,
-        },
-        headers={"User-Agent": USER_AGENT},
-        timeout=30.0,
-    )
-    if resp.status_code != 200:
-        snippet = resp.content[:200].decode("utf-8", "replace")
-        raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {snippet}")
-    body = resp.json()
-    expires_in = int(body.get("expires_in", 0))
-    return Token(
-        cui=cui,
-        env=env,
-        access_token=body["access_token"],
-        refresh_token=body["refresh_token"],
         expires_at=now + timedelta(seconds=expires_in),
         obtained_at=now,
     )

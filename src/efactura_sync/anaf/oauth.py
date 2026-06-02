@@ -100,6 +100,27 @@ def needs_refresh(token: Token, *, now: datetime, buffer_days: int = 7) -> bool:
     return token.expires_at - now <= timedelta(days=buffer_days)
 
 
+def build_authorize_url(*, client_id: str, redirect_uri: str) -> tuple[str, str]:
+    """Build the ANAF authorize URL and a fresh CSRF ``state``.
+
+    Returns ``(url, state)``. The caller opens ``url`` in a browser with the
+    qualified certificate; after auth ANAF redirects to ``redirect_uri`` with
+    ``?code=...&state=...``. ``token_content_type=jwt`` is required so ANAF
+    issues a JWT access token.
+    """
+    state = _secrets.token_urlsafe(24)
+    url = f"{_AUTHORIZE_URL}?" + urllib.parse.urlencode(
+        {
+            "response_type": "code",
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "token_content_type": "jwt",
+        }
+    )
+    return url, state
+
+
 def refresh_access_token(
     *,
     http: httpx.Client,

@@ -155,6 +155,24 @@ def test_load_token_raises_on_missing_key(tmp_path: Path) -> None:
         load_token(tmp_path, cui="12345678", env="prod")
 
 
+def test_build_authorize_url_contains_required_params() -> None:
+    import urllib.parse as up
+
+    from efactura_sync.anaf.oauth import build_authorize_url
+
+    url, state = build_authorize_url(
+        client_id="cid", redirect_uri="https://example.com/cb"
+    )
+    assert state  # non-empty CSRF token
+    q = up.parse_qs(up.urlparse(url).query)
+    assert q["response_type"] == ["code"]
+    assert q["client_id"] == ["cid"]
+    assert q["redirect_uri"] == ["https://example.com/cb"]
+    assert q["state"] == [state]
+    assert q["token_content_type"] == ["jwt"]
+    assert url.startswith("https://logincert.anaf.ro/anaf-oauth2/v1/authorize?")
+
+
 def test_auth_code_login_full_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     """Simulate the browser hitting the local callback server with a code."""
     captured_post: dict[str, object] = {}

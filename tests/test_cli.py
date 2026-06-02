@@ -38,7 +38,10 @@ def _write_fixture_files(tmp_path: Path) -> tuple[Path, Path]:
     secrets_file = tmp_path / "secrets.toml"
     config_file.write_text(
         "[smtp]\nhost='h'\nport=465\ntls='implicit'\nfrom_addr='a'\nto_addr='b'\n"
-        "[anaf]\ndefault_env='prod'\n[logging]\nlevel='INFO'\n",
+        "[anaf]\ndefault_env='prod'\n"
+        "[anaf.prod]\nredirect_uri='https://example.com/cb'\n"
+        "[anaf.test]\nredirect_uri='https://example.com/cb'\n"
+        "[logging]\nlevel='INFO'\n",
         encoding="utf-8",
     )
     secrets_file.write_text(
@@ -66,8 +69,12 @@ def test_auth_login_invokes_oauth_and_writes_token(
 
     from efactura_sync.anaf.oauth import Token
 
-    def fake_login(**kwargs: object) -> Token:
+    def fake_build(**kwargs: object) -> tuple[str, str]:
         captured.update(kwargs)
+        return "https://logincert.anaf.ro/anaf-oauth2/v1/authorize?x=1", "STATE123"
+
+    def fake_exchange(**kwargs: object) -> Token:
+        captured["exchange"] = kwargs
         return Token(
             cui=str(kwargs["cui"]),
             env=str(kwargs["env"]),  # type: ignore[arg-type]
@@ -77,15 +84,20 @@ def test_auth_login_invokes_oauth_and_writes_token(
             obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
         )
 
-    monkeypatch.setattr("efactura_sync.cli.auth_code_login", fake_login)
+    monkeypatch.setattr("efactura_sync.cli.build_authorize_url", fake_build)
+    monkeypatch.setattr("efactura_sync.cli.exchange_code", fake_exchange)
+    monkeypatch.setattr("efactura_sync.cli.webbrowser.open", lambda _url: True)
 
     result = runner.invoke(
         app,
         ["auth", "login", "--cui", "12345678", "--env", "prod"],
+        input="https://example.com/cb?code=abc&state=STATE123\n",
     )
     assert result.exit_code == 0, result.stdout
-    assert captured["cui"] == "12345678"
-    assert captured["env"] == "prod"
+    assert captured["client_id"] == "cid"
+    exchange_kwargs = captured["exchange"]
+    assert exchange_kwargs["expected_state"] == "STATE123"  # type: ignore[index]
+    assert exchange_kwargs["redirect_uri"] == "https://example.com/cb"  # type: ignore[index]
     token_file = tmp_path / "tokens" / "12345678.prod.json"
     assert token_file.exists()
 
@@ -168,16 +180,41 @@ def test_auth_login_propagates_oauth_failure(
 ) -> None:
     from efactura_sync.errors import AuthError
 
-    def fake_login_failing(**kwargs: object) -> object:
+    monkeypatch.setattr(
+        "efactura_sync.cli.build_authorize_url",
+        lambda **_kw: ("https://authorize?x=1", "S1"),
+    )
+    monkeypatch.setattr("efactura_sync.cli.webbrowser.open", lambda _url: True)
+
+    def fake_exchange_failing(**_kwargs: object) -> object:
         raise AuthError("simulated oauth failure")
 
-    monkeypatch.setattr("efactura_sync.cli.auth_code_login", fake_login_failing)
+    monkeypatch.setattr("efactura_sync.cli.exchange_code", fake_exchange_failing)
 
     result = runner.invoke(
         app,
         ["auth", "login", "--cui", "12345678", "--env", "prod"],
+        input="https://example.com/cb?code=abc&state=S1\n",
     )
     assert result.exit_code != 0
+
+
+def test_auth_login_missing_redirect_uri_exits_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Rewrite config.toml without any redirect_uri.
+    (tmp_path / "config.toml").write_text(
+        "[smtp]\nhost='h'\nport=465\ntls='implicit'\nfrom_addr='a'\nto_addr='b'\n"
+        "[anaf]\ndefault_env='prod'\n[logging]\nlevel='INFO'\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["auth", "login", "--cui", "12345678", "--env", "prod"],
+    )
+    assert result.exit_code == 2
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "redirect_uri" in combined
     # No token file should have been written.
     assert not (tmp_path / "tokens" / "12345678.prod.json").exists()
 

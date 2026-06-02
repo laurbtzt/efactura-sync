@@ -3,6 +3,7 @@
 import socket
 import sqlite3
 import traceback
+import webbrowser
 from datetime import UTC, datetime
 from typing import cast
 
@@ -11,7 +12,8 @@ import typer
 
 from efactura_sync.anaf.client import AnafClient
 from efactura_sync.anaf.oauth import (
-    auth_code_login,
+    build_authorize_url,
+    exchange_code,
     load_token,
     needs_refresh,
     refresh_access_token,
@@ -123,15 +125,40 @@ def auth_login(
     cui: str = _OPT_CUI_LOGIN,
     env: str = _OPT_ENV,
 ) -> None:
-    """Run the interactive OAuth2 authorization-code flow on a host with the cert."""
-    cli_ctx, _, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+    """Run the OAuth2 authorization-code flow (paste the redirect URL back)."""
+    cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
+    redirect_uri = cfg.anaf_redirect_uri(env_typed)
+    if not redirect_uri:
+        typer.echo(
+            f"error: no redirect_uri configured for env '{env_typed}'. "
+            f"Add it under [anaf.{env_typed}] in config.toml.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    url, state = build_authorize_url(client_id=client_id, redirect_uri=redirect_uri)
+    opened = webbrowser.open(url)
+    typer.echo("Open this URL in a browser with your ANAF certificate plugged in:")
+    typer.echo(f"\n  {url}\n")
+    if not opened:
+        typer.echo("(could not open the browser automatically — copy the URL above)")
+    typer.echo(
+        "After certificate auth, your browser is redirected to your callback URL. "
+        "The page need not load — copy the full address-bar URL (it contains "
+        "?code=...) and paste it below."
+    )
+    pasted = typer.prompt("Paste the redirect URL (or just the code)")
+
     with httpx.Client() as http:
-        token = auth_code_login(
+        token = exchange_code(
             http=http,
             env=env_typed,
             client_id=client_id,
             client_secret=client_secret,
             cui=cui,
+            redirect_uri=redirect_uri,
+            redirect_response=pasted,
+            expected_state=state,
             now=now,
         )
     save_token(cli_ctx.tokens_dir, token)

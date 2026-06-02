@@ -30,6 +30,8 @@ class AnafConfig:
     prod_client_secret: str
     test_client_id: str
     test_client_secret: str
+    prod_redirect_uri: str | None
+    test_redirect_uri: str | None
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,13 @@ class Config:
             return self.anaf.prod_client_id, self.anaf.prod_client_secret
         if env == "test":
             return self.anaf.test_client_id, self.anaf.test_client_secret
+        raise ConfigError(f"unknown env: {env!r}")
+
+    def anaf_redirect_uri(self, env: Env) -> str | None:
+        if env == "prod":
+            return self.anaf.prod_redirect_uri
+        if env == "test":
+            return self.anaf.test_redirect_uri
         raise ConfigError(f"unknown env: {env!r}")
 
 
@@ -94,12 +103,19 @@ def load_config(*, config_path: Path, secrets_path: Path) -> Config:
         username=str(smtp_sec["username"]),
         password=str(smtp_sec["password"]),
     )
+    anaf_prod_cfg = anaf_cfg.get("prod", {})
+    anaf_test_cfg = anaf_cfg.get("test", {})
+    prod_redirect_uri = anaf_prod_cfg.get("redirect_uri")
+    test_redirect_uri = anaf_test_cfg.get("redirect_uri")
+
     anaf = AnafConfig(
         default_env=default_env,
         prod_client_id=str(anaf_prod["client_id"]),
         prod_client_secret=str(anaf_prod["client_secret"]),
         test_client_id=str(anaf_test["client_id"]),
         test_client_secret=str(anaf_test["client_secret"]),
+        prod_redirect_uri=str(prod_redirect_uri) if prod_redirect_uri is not None else None,
+        test_redirect_uri=str(test_redirect_uri) if test_redirect_uri is not None else None,
     )
     return Config(
         smtp=smtp,

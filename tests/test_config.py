@@ -61,6 +61,85 @@ def test_load_config_minimal(tmp_path: Path) -> None:
     assert cfg.anaf_credentials("test") == ("cid-test", "cs-test")
 
 
+def test_load_config_redirect_uri_per_env(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [anaf.prod]
+        redirect_uri="https://example.com/cb-prod"
+        [anaf.test]
+        redirect_uri="https://example.com/cb-test"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    cfg = load_config(config_path=cfg_path, secrets_path=sec_path)
+    assert cfg.anaf_redirect_uri("prod") == "https://example.com/cb-prod"
+    assert cfg.anaf_redirect_uri("test") == "https://example.com/cb-test"
+
+
+def test_load_config_redirect_uri_optional(tmp_path: Path) -> None:
+    # The minimal config (no [anaf.prod]/[anaf.test] redirect_uri) yields None.
+    cfg_path = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [smtp]
+        host="h"
+        port=465
+        tls="implicit"
+        from_addr="a"
+        to_addr="b"
+        [anaf]
+        default_env="prod"
+        [logging]
+        level="INFO"
+        """,
+    )
+    sec_path = _write(
+        tmp_path,
+        "secrets.toml",
+        """
+        [smtp]
+        username="u"
+        password="p"
+        [anaf.prod]
+        client_id="x"
+        client_secret="y"
+        [anaf.test]
+        client_id="x"
+        client_secret="y"
+        """,
+    )
+    cfg = load_config(config_path=cfg_path, secrets_path=sec_path)
+    assert cfg.anaf_redirect_uri("prod") is None
+    assert cfg.anaf_redirect_uri("test") is None
+
+
 def test_load_config_missing_file(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="config.toml"):
         load_config(config_path=tmp_path / "nope.toml", secrets_path=tmp_path / "secrets.toml")

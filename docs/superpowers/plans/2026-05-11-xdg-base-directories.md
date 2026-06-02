@@ -30,7 +30,7 @@ No new files. No deletions. The helpers and tests live alongside existing code i
 - Modify: `src/efactura_sync/cli.py` (add helpers near top of module, before `_DEFAULT_CONFIG_DIR`)
 - Test: `tests/test_cli.py` (append new test class at end of file)
 
-- [ ] **Step 1.1: Write the failing tests**
+- [x] **Step 1.1: Write the failing tests**
 
 Append to `tests/test_cli.py`:
 
@@ -83,12 +83,12 @@ class TestXdgBaseDir:
         assert result == target
 ```
 
-- [ ] **Step 1.2: Run tests to verify they fail**
+- [x] **Step 1.2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_cli.py::TestXdgBaseDir -v`
 Expected: 4 failures, all with `ImportError: cannot import name '_xdg_base_dir' from 'efactura_sync.cli'`.
 
-- [ ] **Step 1.3: Add `os` to imports if not present**
+- [x] **Step 1.3: Add `os` to imports if not present**
 
 Open `src/efactura_sync/cli.py` and confirm the top-of-file imports include `import os`. (They don't currently — `socket`, `sqlite3`, `traceback`, `datetime`, `dataclass`, `pathlib`, `typing` are present.)
 
@@ -101,7 +101,7 @@ import sqlite3
 import traceback
 ```
 
-- [ ] **Step 1.4: Add the three helpers**
+- [x] **Step 1.4: Add the three helpers**
 
 Insert this block in `src/efactura_sync/cli.py` immediately **before** the line `_DEFAULT_CONFIG_DIR = Path.home() / ".config" / "efactura-sync"` (currently around line 52):
 
@@ -131,17 +131,17 @@ def _xdg_data_home() -> Path:
 
 ```
 
-- [ ] **Step 1.5: Run tests to verify they pass**
+- [x] **Step 1.5: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_cli.py::TestXdgBaseDir -v`
 Expected: 4 passes.
 
-- [ ] **Step 1.6: Run full test suite, lint, and type-check**
+- [x] **Step 1.6: Run full test suite, lint, and type-check**
 
 Run: `.venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/pytest -q`
 Expected: all green, full pre-existing suite still passing.
 
-- [ ] **Step 1.7: Commit**
+- [x] **Step 1.7: Commit**
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -166,7 +166,7 @@ EOF
 **Files:**
 - Modify: `src/efactura_sync/cli.py:52` (`_DEFAULT_CONFIG_DIR` and `_OPT_DB` definition)
 
-- [ ] **Step 2.1: Replace `_DEFAULT_CONFIG_DIR` and `_OPT_DB` default**
+- [x] **Step 2.1: Replace `_DEFAULT_CONFIG_DIR` and `_OPT_DB` default**
 
 In `src/efactura_sync/cli.py`, find this block (currently around lines 52-72):
 
@@ -223,7 +223,7 @@ _OPT_DB = typer.Option(
 
 The three intermediate `typer.Option` definitions (`_OPT_CONFIG`, `_OPT_SECRETS`, `_OPT_TOKENS_DIR`) are unchanged in shape; only `_DEFAULT_CONFIG_DIR`'s right-hand side and `_OPT_DB`'s default value change, and a new `_DEFAULT_DATA_DIR` is introduced.
 
-- [ ] **Step 2.2: Add an integration-style test for the default with XDG env unset**
+- [x] **Step 2.2: Add an integration-style test for the default with XDG env unset**
 
 This test exercises the wired-in defaults to make sure they fall through correctly when the env vars are unset, locking in the backwards-compatible behavior for pre-existing installs.
 
@@ -253,12 +253,12 @@ Append to `tests/test_cli.py` inside the `TestXdgBaseDir` class (so the env-isol
         assert _xdg_data_home() == tmp_path / ".local" / "share"
 ```
 
-- [ ] **Step 2.3: Run tests, lint, type-check**
+- [x] **Step 2.3: Run tests, lint, type-check**
 
 Run: `.venv/bin/ruff check . && .venv/bin/mypy src && .venv/bin/pytest -q`
 Expected: all green; the new tests pass; no regressions in the rest of the suite.
 
-- [ ] **Step 2.4: Commit**
+- [x] **Step 2.4: Commit**
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -285,11 +285,11 @@ EOF
 **Files:**
 - Modify: `README.md` (insert between `## Setup` and `## Onboard a CUI`)
 
-- [ ] **Step 3.1: Identify the insertion point**
+- [x] **Step 3.1: Identify the insertion point**
 
 Open `README.md`. Locate the start of the `## Onboard a CUI` section (currently around line 61). The new subsection is inserted **immediately above** that line and **below** the last paragraph of `## Setup`.
 
-- [ ] **Step 3.2: Insert the new section**
+- [x] **Step 3.2: Insert the new section**
 
 Insert exactly this content immediately above the `## Onboard a CUI` line:
 
@@ -322,12 +322,12 @@ For one-off overrides, the following flags take precedence over the XDG defaults
 
 (Note: the trailing blank line above is intentional — it separates this subsection from `## Onboard a CUI`.)
 
-- [ ] **Step 3.3: Sanity-check the README renders**
+- [x] **Step 3.3: Sanity-check the README renders**
 
 Run: `head -100 README.md | tail -50`
 Expected: the new section appears between the end of `## Setup` and the start of `## Onboard a CUI`, with the env-var example fenced as a bash block.
 
-- [ ] **Step 3.4: Commit**
+- [x] **Step 3.4: Commit**
 
 ```bash
 git add README.md
@@ -345,7 +345,7 @@ EOF
 
 **Files:** none (verification only).
 
-- [ ] **Step 4.1: Full check**
+- [x] **Step 4.1: Full check**
 
 Run:
 
@@ -358,7 +358,7 @@ Expected:
 - `mypy`: "Success: no issues found in 16 source files"
 - `pytest`: full pre-existing suite plus the six new tests in `TestXdgBaseDir`, all green.
 
-- [ ] **Step 4.2: Smoke-test the CLI defaults**
+- [x] **Step 4.2: Smoke-test the CLI defaults**
 
 Run:
 
@@ -377,7 +377,7 @@ unset XDG_CONFIG_HOME XDG_DATA_HOME
 
 Expected: defaults fall back to `$HOME/.config/efactura-sync/...` and `$HOME/.local/share/efactura-sync/state.db`.
 
-- [ ] **Step 4.3: Confirm git log is clean**
+- [x] **Step 4.3: Confirm git log is clean**
 
 Run: `git log --oneline -5`
 Expected: three new commits on top — helpers, wiring, README — in that order.

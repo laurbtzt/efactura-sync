@@ -60,7 +60,7 @@ efactura-sync/
 - Create: `tests/__init__.py`
 - Create: `.python-version`
 
-- [ ] **Step 1:** Write `pyproject.toml`
+- [x] **Step 1:** Write `pyproject.toml`
 
 ```toml
 [project]
@@ -116,31 +116,31 @@ markers = [
 addopts = "-q --strict-markers"
 ```
 
-- [ ] **Step 2:** Write `src/efactura_sync/__init__.py`
+- [x] **Step 2:** Write `src/efactura_sync/__init__.py`
 
 ```python
 __version__ = "0.1.0"
 ```
 
-- [ ] **Step 3:** Write `tests/__init__.py` (empty file)
+- [x] **Step 3:** Write `tests/__init__.py` (empty file)
 
-- [ ] **Step 4:** Write `.python-version`
+- [x] **Step 4:** Write `.python-version`
 
 ```
 3.12
 ```
 
-- [ ] **Step 5:** Sync the environment
+- [x] **Step 5:** Sync the environment
 
 Run: `uv sync --dev`
 Expected: completes without error; creates `.venv/`, `uv.lock`.
 
-- [ ] **Step 6:** Verify the package imports
+- [x] **Step 6:** Verify the package imports
 
 Run: `uv run python -c "import efactura_sync; print(efactura_sync.__version__)"`
 Expected: `0.1.0`
 
-- [ ] **Step 7:** Commit
+- [x] **Step 7:** Commit
 
 ```bash
 git add pyproject.toml uv.lock .python-version src/ tests/
@@ -155,7 +155,7 @@ git commit -m "chore: project scaffold with uv + ruff + mypy + pytest"
 - Create: `.github/workflows/ci.yml`
 - Create: `tests/conftest.py`
 
-- [ ] **Step 1:** Write `.github/workflows/ci.yml`
+- [x] **Step 1:** Write `.github/workflows/ci.yml`
 
 ```yaml
 name: ci
@@ -184,7 +184,7 @@ jobs:
       - run: uv run pytest -m "not integration"
 ```
 
-- [ ] **Step 2:** Write `tests/conftest.py`
+- [x] **Step 2:** Write `tests/conftest.py`
 
 ```python
 from __future__ import annotations
@@ -217,17 +217,17 @@ def db() -> Iterator[sqlite3.Connection]:
     conn.close()
 ```
 
-- [ ] **Step 3:** Run an empty-test sanity check
+- [x] **Step 3:** Run an empty-test sanity check
 
 Run: `uv run pytest`
 Expected: `0 passed` (no tests yet, but pytest collects without error).
 
-- [ ] **Step 4:** Run lint + format + typecheck on what we have
+- [x] **Step 4:** Run lint + format + typecheck on what we have
 
 Run: `uv run ruff check . && uv run ruff format --check . && uv run mypy src`
 Expected: all pass.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add .github/workflows/ci.yml tests/conftest.py
@@ -242,7 +242,7 @@ git commit -m "ci: add github actions workflow and pytest fixtures"
 - Create: `src/efactura_sync/errors.py`
 - Test: `tests/test_errors.py`
 
-- [ ] **Step 1:** Write the failing test `tests/test_errors.py`
+- [x] **Step 1:** Write the failing test `tests/test_errors.py`
 
 ```python
 import pytest
@@ -286,12 +286,12 @@ def test_efactura_error_can_be_raised() -> None:
         raise EfacturaError("any")
 ```
 
-- [ ] **Step 2:** Run the test to verify it fails
+- [x] **Step 2:** Run the test to verify it fails
 
 Run: `uv run pytest tests/test_errors.py -v`
 Expected: `ImportError` / collection error — `efactura_sync.errors` does not exist yet.
 
-- [ ] **Step 3:** Write `src/efactura_sync/errors.py`
+- [x] **Step 3:** Write `src/efactura_sync/errors.py`
 
 ```python
 """Typed exceptions used across the package."""
@@ -340,12 +340,12 @@ class RenderError(EfacturaError):
     """xmltopdf failed (or returned something that isn't a PDF)."""
 ```
 
-- [ ] **Step 4:** Run the test to verify it passes
+- [x] **Step 4:** Run the test to verify it passes
 
 Run: `uv run pytest tests/test_errors.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/errors.py tests/test_errors.py
@@ -362,9 +362,9 @@ git commit -m "feat(errors): add typed exception hierarchy"
 - Test: `tests/storage/__init__.py` (empty)
 - Test: `tests/storage/test_layout.py`
 
-- [ ] **Step 1:** Create empty `src/efactura_sync/storage/__init__.py` and `tests/storage/__init__.py`.
+- [x] **Step 1:** Create empty `src/efactura_sync/storage/__init__.py` and `tests/storage/__init__.py`.
 
-- [ ] **Step 2:** Write the failing test `tests/storage/test_layout.py`
+- [x] **Step 2:** Write the failing test `tests/storage/test_layout.py`
 
 ```python
 from datetime import date
@@ -420,12 +420,12 @@ def test_message_zip_for_erori_uses_creation_date() -> None:
     assert p == Path("/a/12345678/messages/2026/05/9000.zip")
 ```
 
-- [ ] **Step 3:** Run the test to verify it fails
+- [x] **Step 3:** Run the test to verify it fails
 
 Run: `uv run pytest tests/storage/test_layout.py -v`
 Expected: ImportError on `efactura_sync.storage.layout`.
 
-- [ ] **Step 4:** Write `src/efactura_sync/storage/layout.py`
+- [x] **Step 4:** Write `src/efactura_sync/storage/layout.py`
 
 ```python
 """Compute archive paths from a small set of inputs."""
@@ -495,12 +495,12 @@ def message_zip_path(
     )
 ```
 
-- [ ] **Step 5:** Run the test to verify it passes
+- [x] **Step 5:** Run the test to verify it passes
 
 Run: `uv run pytest tests/storage/test_layout.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 6:** Commit
+- [x] **Step 6:** Commit
 
 ```bash
 git add src/efactura_sync/storage/ tests/storage/
@@ -515,7 +515,7 @@ git commit -m "feat(storage): add archive path computation"
 - Create: `src/efactura_sync/storage/files.py`
 - Test: `tests/storage/test_files.py`
 
-- [ ] **Step 1:** Write the failing test `tests/storage/test_files.py`
+- [x] **Step 1:** Write the failing test `tests/storage/test_files.py`
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -567,12 +567,12 @@ def test_sweep_partials_handles_missing_dir(tmp_path: Path) -> None:
     assert removed == []
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/storage/test_files.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/storage/files.py`
+- [x] **Step 3:** Write `src/efactura_sync/storage/files.py`
 
 ```python
 """Atomic file writes and stale `.partial` sweep."""
@@ -611,12 +611,12 @@ class FileStore:
         return removed
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/storage/test_files.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/storage/files.py tests/storage/test_files.py
@@ -631,7 +631,7 @@ git commit -m "feat(storage): add atomic file writes and partial sweep"
 - Create: `src/efactura_sync/storage/db.py`
 - Test: `tests/storage/test_db.py`
 
-- [ ] **Step 1:** Write the failing test `tests/storage/test_db.py`
+- [x] **Step 1:** Write the failing test `tests/storage/test_db.py`
 
 ```python
 import sqlite3
@@ -685,12 +685,12 @@ def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
     assert n == 0
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/storage/db.py`
+- [x] **Step 3:** Write `src/efactura_sync/storage/db.py`
 
 ```python
 """SQLite schema and queries.
@@ -760,12 +760,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: 3 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/storage/db.py tests/storage/test_db.py
@@ -780,7 +780,7 @@ git commit -m "feat(storage): add sqlite schema and init"
 - Modify: `src/efactura_sync/storage/db.py`
 - Modify: `tests/storage/test_db.py`
 
-- [ ] **Step 1:** Append failing tests to `tests/storage/test_db.py`
+- [x] **Step 1:** Append failing tests to `tests/storage/test_db.py`
 
 ```python
 from datetime import datetime, timezone
@@ -846,12 +846,12 @@ def test_add_tracked_counterparty_requires_existing_monitored_cui(db, now_utc) -
         add_tracked_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: ImportError on the new symbols.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/storage/db.py`
+- [x] **Step 3:** Append to `src/efactura_sync/storage/db.py`
 
 ```python
 from dataclasses import dataclass
@@ -956,12 +956,12 @@ def remove_tracked_counterparty(
     conn.commit()
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: 8 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/storage/db.py tests/storage/test_db.py
@@ -976,7 +976,7 @@ git commit -m "feat(storage): add monitored cui and tracked counterparty queries
 - Modify: `src/efactura_sync/storage/db.py`
 - Modify: `tests/storage/test_db.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 from efactura_sync.storage.db import PollState, get_poll_state, upsert_poll_state
@@ -1007,12 +1007,12 @@ def test_poll_state_is_keyed_by_cui_and_env(db, now_utc) -> None:
     assert get_poll_state(db, cui="12345678", env="test") is not None
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: ImportError on new symbols.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/storage/db.py`
+- [x] **Step 3:** Append to `src/efactura_sync/storage/db.py`
 
 ```python
 @dataclass(frozen=True)
@@ -1045,12 +1045,12 @@ def upsert_poll_state(
     conn.commit()
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: 11 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/storage/db.py tests/storage/test_db.py
@@ -1065,7 +1065,7 @@ git commit -m "feat(storage): add poll_state get/upsert"
 - Modify: `src/efactura_sync/storage/db.py`
 - Modify: `tests/storage/test_db.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 from datetime import date
@@ -1182,12 +1182,12 @@ def test_find_pending_rows_returns_only_unfinished(db, now_utc) -> None:
     assert pending == {"B", "C"}
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: ImportError on new symbols.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/storage/db.py`
+- [x] **Step 3:** Append to `src/efactura_sync/storage/db.py`
 
 ```python
 from datetime import date
@@ -1358,12 +1358,12 @@ def find_pending_rows(
     return [_row_to_msg(r) for r in rows]
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/storage/test_db.py -v`
 Expected: 17 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/storage/db.py tests/storage/test_db.py
@@ -1378,7 +1378,7 @@ git commit -m "feat(storage): add synced_messages dedup ledger and step markers"
 - Create: `src/efactura_sync/config.py`
 - Test: `tests/test_config.py`
 
-- [ ] **Step 1:** Write failing test `tests/test_config.py`
+- [x] **Step 1:** Write failing test `tests/test_config.py`
 
 ```python
 from pathlib import Path
@@ -1524,12 +1524,12 @@ def test_load_config_invalid_tls(tmp_path: Path) -> None:
         load_config(config_path=cfg_path, secrets_path=sec_path)
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/config.py`
+- [x] **Step 3:** Write `src/efactura_sync/config.py`
 
 ```python
 """Load and validate TOML configuration."""
@@ -1646,12 +1646,12 @@ def load_config(*, config_path: Path, secrets_path: Path) -> Config:
     )
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_config.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/config.py tests/test_config.py
@@ -1669,9 +1669,9 @@ git commit -m "feat(config): add TOML config + secrets loader"
 - Create: `tests/fixtures/ubl/primita_minimal.xml`
 - Test: `tests/anaf/test_messages.py`
 
-- [ ] **Step 1:** Create empty `__init__.py` files for `src/efactura_sync/anaf/` and `tests/anaf/`.
+- [x] **Step 1:** Create empty `__init__.py` files for `src/efactura_sync/anaf/` and `tests/anaf/`.
 
-- [ ] **Step 2:** Write fixture `tests/fixtures/ubl/primita_minimal.xml`
+- [x] **Step 2:** Write fixture `tests/fixtures/ubl/primita_minimal.xml`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1705,7 +1705,7 @@ git commit -m "feat(config): add TOML config + secrets loader"
 </Invoice>
 ```
 
-- [ ] **Step 3:** Write failing test `tests/anaf/test_messages.py`
+- [x] **Step 3:** Write failing test `tests/anaf/test_messages.py`
 
 ```python
 from datetime import date
@@ -1811,12 +1811,12 @@ def test_parse_invoice_fields() -> None:
     )
 ```
 
-- [ ] **Step 4:** Run to verify failure
+- [x] **Step 4:** Run to verify failure
 
 Run: `uv run pytest tests/anaf/test_messages.py -v`
 Expected: ImportError.
 
-- [ ] **Step 5:** Write `src/efactura_sync/anaf/messages.py`
+- [x] **Step 5:** Write `src/efactura_sync/anaf/messages.py`
 
 ```python
 """Decode listamesaje JSON and parse UBL XML invoices."""
@@ -1975,12 +1975,12 @@ def parse_invoice_fields(ubl_xml: bytes) -> InvoiceFields:
     )
 ```
 
-- [ ] **Step 6:** Run to verify it passes
+- [x] **Step 6:** Run to verify it passes
 
 Run: `uv run pytest tests/anaf/test_messages.py -v`
 Expected: 6 passed.
 
-- [ ] **Step 7:** Commit
+- [x] **Step 7:** Commit
 
 ```bash
 git add src/efactura_sync/anaf/ tests/anaf/ tests/fixtures/
@@ -1995,7 +1995,7 @@ git commit -m "feat(anaf): parse listamesaje json and UBL invoice fields"
 - Create: `src/efactura_sync/anaf/client.py`
 - Test: `tests/anaf/test_client.py`
 
-- [ ] **Step 1:** Write failing test `tests/anaf/test_client.py`
+- [x] **Step 1:** Write failing test `tests/anaf/test_client.py`
 
 ```python
 import httpx
@@ -2066,12 +2066,12 @@ def test_4xx_raises_permanent() -> None:
         client.download(msg_id="3001", access_token="tok")
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/anaf/test_client.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/anaf/client.py`
+- [x] **Step 3:** Write `src/efactura_sync/anaf/client.py`
 
 ```python
 """HTTP wrapper for the read-side ANAF e-Factura endpoints."""
@@ -2146,12 +2146,12 @@ class AnafClient:
         return resp.content
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/anaf/test_client.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/anaf/client.py tests/anaf/test_client.py
@@ -2166,7 +2166,7 @@ git commit -m "feat(anaf): add http client for listamesaje + descarcare"
 - Create: `src/efactura_sync/render.py`
 - Test: `tests/test_render.py`
 
-- [ ] **Step 1:** Write failing test `tests/test_render.py`
+- [x] **Step 1:** Write failing test `tests/test_render.py`
 
 ```python
 import httpx
@@ -2212,12 +2212,12 @@ def test_render_5xx_raises_render_error() -> None:
         renderer.render(ubl_xml=b"<Invoice/>")
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_render.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/render.py`
+- [x] **Step 3:** Write `src/efactura_sync/render.py`
 
 ```python
 """Render UBL XML to PDF via ANAF's hosted xmltopdf service."""
@@ -2253,12 +2253,12 @@ class PdfRenderer:
         return resp.content
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_render.py -v`
 Expected: 3 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/render.py tests/test_render.py
@@ -2273,7 +2273,7 @@ git commit -m "feat(render): add xmltopdf renderer"
 - Create: `src/efactura_sync/anaf/oauth.py`
 - Test: `tests/anaf/test_oauth.py`
 
-- [ ] **Step 1:** Write failing test `tests/anaf/test_oauth.py`
+- [x] **Step 1:** Write failing test `tests/anaf/test_oauth.py`
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -2381,12 +2381,12 @@ def test_refresh_token_400_raises_refresh_expired() -> None:
         )
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/anaf/test_oauth.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/anaf/oauth.py`
+- [x] **Step 3:** Write `src/efactura_sync/anaf/oauth.py`
 
 ```python
 """ANAF OAuth2: token persistence + refresh.
@@ -2509,12 +2509,12 @@ def refresh_access_token(
     )
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/anaf/test_oauth.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/anaf/oauth.py tests/anaf/test_oauth.py
@@ -2529,7 +2529,7 @@ git commit -m "feat(oauth): add token store and refresh flow"
 - Modify: `src/efactura_sync/anaf/oauth.py`
 - Modify: `tests/anaf/test_oauth.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 import threading
@@ -2586,12 +2586,12 @@ def test_auth_code_login_full_flow(monkeypatch) -> None:
     assert "grant_type=authorization_code" in captured_post["body"]
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/anaf/test_oauth.py -v -k auth_code_login`
 Expected: ImportError on `auth_code_login`.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/anaf/oauth.py`
+- [x] **Step 3:** Append to `src/efactura_sync/anaf/oauth.py`
 
 ```python
 import secrets as _secrets
@@ -2702,12 +2702,12 @@ def auth_code_login(
     )
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/anaf/test_oauth.py -v`
 Expected: 6 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/anaf/oauth.py tests/anaf/test_oauth.py
@@ -2722,7 +2722,7 @@ git commit -m "feat(oauth): add interactive authorization-code login flow"
 - Create: `src/efactura_sync/mail.py`
 - Test: `tests/test_mail.py`
 
-- [ ] **Step 1:** Write failing test `tests/test_mail.py`
+- [x] **Step 1:** Write failing test `tests/test_mail.py`
 
 ```python
 from datetime import date
@@ -2857,12 +2857,12 @@ def test_render_failure_email() -> None:
     assert email.attachments == [("traceback.txt", b"Traceback (most recent call last):\n...")]
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_mail.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/mail.py`
+- [x] **Step 3:** Write `src/efactura_sync/mail.py`
 
 ```python
 """Email rendering (Romanian) and SMTP delivery.
@@ -3050,12 +3050,12 @@ def render_failure_email(
     )
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_mail.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/mail.py tests/test_mail.py
@@ -3070,7 +3070,7 @@ git commit -m "feat(mail): add Romanian email rendering for all message types"
 - Modify: `src/efactura_sync/mail.py`
 - Modify: `tests/test_mail.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 from email import message_from_bytes
@@ -3170,12 +3170,12 @@ def test_mailer_starttls(monkeypatch) -> None:
     assert smtp.starttls_called is True
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_mail.py -v -k mailer`
 Expected: AttributeError on `Mailer`.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/mail.py`
+- [x] **Step 3:** Append to `src/efactura_sync/mail.py`
 
 ```python
 import smtplib
@@ -3229,12 +3229,12 @@ class Mailer:
             smtp.sendmail(self._from, [to_addr], std.as_bytes())
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_mail.py -v`
 Expected: 7 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/mail.py tests/test_mail.py
@@ -3249,7 +3249,7 @@ git commit -m "feat(mail): add SMTP Mailer with implicit-tls and starttls"
 - Create: `src/efactura_sync/sync.py`
 - Test: `tests/test_sync.py`
 
-- [ ] **Step 1:** Write failing test `tests/test_sync.py`
+- [x] **Step 1:** Write failing test `tests/test_sync.py`
 
 ```python
 from __future__ import annotations
@@ -3468,12 +3468,12 @@ def test_pdf_render_failure_still_sends_email_with_zip_only(deps: SyncDeps, now_
     assert len(email.attachments) == 1  # zip only
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_sync.py -v`
 Expected: ImportError on `efactura_sync.sync`.
 
-- [ ] **Step 3:** Write `src/efactura_sync/sync.py`
+- [x] **Step 3:** Write `src/efactura_sync/sync.py`
 
 ```python
 """Per-CUI sync orchestrator.
@@ -3748,12 +3748,12 @@ def _decide_skip_reason(deps: SyncDeps, *, my_cui: str, list_msg: ListMessage) -
     return None
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_sync.py -v`
 Expected: 5 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/sync.py tests/test_sync.py
@@ -3768,7 +3768,7 @@ git commit -m "feat(sync): add per-message orchestrator with email rules"
 - Modify: `src/efactura_sync/sync.py`
 - Modify: `tests/test_sync.py`
 
-- [ ] **Step 1:** Append failing tests
+- [x] **Step 1:** Append failing tests
 
 ```python
 from datetime import timedelta
@@ -3840,12 +3840,12 @@ def test_run_for_cui_records_poll_state_on_success(deps: SyncDeps, now_utc) -> N
     assert state.last_polled_at == now_utc
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_sync.py -v -k run_for_cui`
 Expected: ImportError on `run_for_cui` / `RunResult`.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/sync.py`
+- [x] **Step 3:** Append to `src/efactura_sync/sync.py`
 
 ```python
 import math
@@ -3927,12 +3927,12 @@ def run_for_cui(
     return RunResult(processed=processed, failures=failures)
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_sync.py -v`
 Expected: 9 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/sync.py tests/test_sync.py
@@ -3947,7 +3947,7 @@ git commit -m "feat(sync): add per-cui run with resume pass and zile windowing"
 - Create: `src/efactura_sync/cli.py`
 - Test: `tests/test_cli.py`
 
-- [ ] **Step 1:** Write failing test `tests/test_cli.py`
+- [x] **Step 1:** Write failing test `tests/test_cli.py`
 
 ```python
 from pathlib import Path
@@ -4022,12 +4022,12 @@ def test_auth_login_invokes_oauth_and_writes_token(monkeypatch, tmp_path: Path) 
     assert token_file.exists()
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: ImportError.
 
-- [ ] **Step 3:** Write `src/efactura_sync/cli.py`
+- [x] **Step 3:** Write `src/efactura_sync/cli.py`
 
 ```python
 """Typer CLI."""
@@ -4139,12 +4139,12 @@ def auth_refresh(
     typer.echo(f"OK — refreshed; expires {new_tok.expires_at.isoformat()}")
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: 2 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -4159,7 +4159,7 @@ git commit -m "feat(cli): add typer skeleton + auth login/refresh"
 - Modify: `src/efactura_sync/cli.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 import sqlite3
@@ -4232,12 +4232,12 @@ def test_track_add_list_remove(tmp_path: Path) -> None:
     assert list_tracked_counterparties(conn, my_cui="12345678") == []
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: failures (no `--db` option, no `cui`/`track` commands wired yet).
 
-- [ ] **Step 3:** Modify `src/efactura_sync/cli.py`
+- [x] **Step 3:** Modify `src/efactura_sync/cli.py`
 
 Replace the `_main` callback to add `--db`, then append the new commands.
 
@@ -4353,12 +4353,12 @@ def track_remove(
     typer.echo(f"OK — untracked {counterparty_cui} for {cui}")
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: 4 passed.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -4373,7 +4373,7 @@ git commit -m "feat(cli): add cui and track subcommands"
 - Modify: `src/efactura_sync/cli.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(monkeypatch, tmp_path: Path) -> None:
@@ -4441,12 +4441,12 @@ def test_status_lists_cuis_and_token_state(tmp_path: Path) -> None:
     assert "2026-08-01" in result.stdout  # expires_at
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_cli.py -v -k "sync_run or status"`
 Expected: failure — `sync run` and `status` not implemented yet.
 
-- [ ] **Step 3:** Append to `src/efactura_sync/cli.py`
+- [x] **Step 3:** Append to `src/efactura_sync/cli.py`
 
 ```python
 from efactura_sync.anaf.client import AnafClient
@@ -4577,12 +4577,12 @@ def replay(
     typer.echo(f"replay queued for {msg_id}; run 'sync run --cui={cui} --env={env}' to process")
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: all CLI tests pass.
 
-- [ ] **Step 5:** Commit
+- [x] **Step 5:** Commit
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -4597,7 +4597,7 @@ git commit -m "feat(cli): add sync run, status, and replay commands"
 - Modify: `src/efactura_sync/cli.py`
 - Modify: `tests/test_cli.py`
 
-- [ ] **Step 1:** Append failing test
+- [x] **Step 1:** Append failing test
 
 ```python
 def test_sync_run_sends_failure_email_on_uncaught_exception(monkeypatch, tmp_path: Path) -> None:
@@ -4643,12 +4643,12 @@ def test_sync_run_sends_failure_email_on_uncaught_exception(monkeypatch, tmp_pat
     assert "kaboom" in msg.body or "RuntimeError" in msg.body
 ```
 
-- [ ] **Step 2:** Run to verify failure
+- [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_cli.py -v -k failure_email`
 Expected: failure (no failure email path yet).
 
-- [ ] **Step 3:** Modify `src/efactura_sync/cli.py` — wrap the body of `sync_run` in a try/except. Replace the entire `sync_run` function with:
+- [x] **Step 3:** Modify `src/efactura_sync/cli.py` — wrap the body of `sync_run` in a try/except. Replace the entire `sync_run` function with:
 
 ```python
 @sync_app.command("run")
@@ -4758,17 +4758,17 @@ def sync_run(
         raise typer.Exit(code=1) from exc
 ```
 
-- [ ] **Step 4:** Run to verify it passes
+- [x] **Step 4:** Run to verify it passes
 
 Run: `uv run pytest tests/test_cli.py -v`
 Expected: all CLI tests pass, including failure email.
 
-- [ ] **Step 5:** Lint + typecheck the whole tree
+- [x] **Step 5:** Lint + typecheck the whole tree
 
 Run: `uv run ruff check . && uv run ruff format --check . && uv run mypy src`
 Expected: all pass. (Fix issues inline before committing if any surface.)
 
-- [ ] **Step 6:** Commit
+- [x] **Step 6:** Commit
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
@@ -4782,7 +4782,7 @@ git commit -m "feat(cli): send failure-notification email on uncaught sync error
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1:** Replace `README.md` with:
+- [x] **Step 1:** Replace `README.md` with:
 
 ````markdown
 # efactura-sync
@@ -4891,12 +4891,12 @@ uv run mypy src
 ```
 ````
 
-- [ ] **Step 2:** Verify the file lints clean
+- [x] **Step 2:** Verify the file lints clean
 
 Run: `uv run ruff check . && uv run ruff format --check .`
 Expected: pass.
 
-- [ ] **Step 3:** Commit
+- [x] **Step 3:** Commit
 
 ```bash
 git add README.md

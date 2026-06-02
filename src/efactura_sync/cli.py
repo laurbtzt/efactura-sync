@@ -430,7 +430,7 @@ def status_cmd(
                 tok_str = f"expires {tok.expires_at.isoformat()}"
                 if needs_refresh(tok, now=now):
                     tok_str += " (refresh due!)"
-            except AuthError, FileNotFoundError:
+            except (AuthError, FileNotFoundError):
                 tok_str = "no token"
 
             state = get_poll_state(conn, cui=c.cui, env=env_typed)

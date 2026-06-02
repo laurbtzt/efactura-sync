@@ -64,11 +64,19 @@ to_addr = "you@yourdomain.tld"
 [anaf]
 default_env = "prod"
 
+[anaf.prod]
+redirect_uri = "https://yourdomain.tld/efactura-callback"
+
+[anaf.test]
+redirect_uri = "https://yourdomain.tld/efactura-callback"
+
 [logging]
 level = "INFO"
 ```
 
 > The `[smtp]` section is validated at startup and used at runtime: per-message notifications go to `to_addr`, run-failure notifications to `error_to_addr` (defaults to `to_addr` if omitted).
+
+> `redirect_uri` must exactly match the HTTPS Callback URL registered in your ANAF OAuth profile. It needs no running server — see "Onboard a CUI".
 
 `$EFACTURA_SYNC_CONFIG_DIR/secrets.toml` (chmod 0600):
 
@@ -92,12 +100,21 @@ chmod 600 "$EFACTURA_SYNC_CONFIG_DIR/secrets.toml"
 
 ## Onboard a CUI
 
+Register the OAuth app once in the ANAF portal (Servicii Online > Înregistrare
+utilizatori > DEZVOLTATORI APLICAȚII) with an **HTTPS** Callback URL on a domain
+you control, e.g. `https://yourdomain.tld/efactura-callback`. ANAF rejects
+`http://localhost`. **The callback needs no running server** — after cert auth
+your browser is redirected there with `?code=...` in the address bar, even if the
+page itself 404s. Put that same URL in `config.toml` under `[anaf.<env>]`.
+
 On the **laptop** (digital cert plugged in):
 
 ```bash
 uv run efactura-sync cui add 12345678 --name "Acme SRL"
 uv run efactura-sync auth login --cui 12345678 --env prod
-# Browser opens, ANAF asks for cert PIN, finishes silently.
+# A browser opens the ANAF authorize URL; present the cert (PIN).
+# Your browser lands on the callback URL — copy the FULL address-bar URL
+# (it contains ?code=...) and paste it back into the CLI prompt.
 # Then copy the token to the server:
 scp "$EFACTURA_SYNC_CONFIG_DIR/tokens/12345678.prod.json" \
     server:"$EFACTURA_SYNC_CONFIG_DIR/tokens/"

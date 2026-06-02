@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a Python CLI that pulls Romanian ANAF e-Factura messages for 1–5 monitored CUIs into a deterministic local archive, deduplicates via SQLite, renders invoice PDFs through ANAF's `xmltopdf` endpoint, and sends Romanian-language email notifications gated by a per-CUI tracked-counterparties allow-list.
+**Goal:** Build a Python CLI that pulls Romanian ANAF e-Factura messages for 1–5 monitored CUIs into a deterministic local archive, deduplicates via SQLite, renders invoice PDFs through ANAF's `xmltopdf` endpoint, and sends Romanian-language email notifications gated by a per-CUI watched-counterparties watchlist.
 
 **Architecture:** `src/` layout package with explicit dependency injection at three external seams (ANAF HTTP, SMTP, filesystem). One CLI runs in two host roles: laptop for interactive `auth login`, headless server for daily cron `sync run`. SQLite is the dedup ledger and resume-from-failure log; each message walks five steps (insert → download → render → email-decision → email-send) with a column-per-step success marker.
 
@@ -651,7 +651,7 @@ def test_init_schema_is_idempotent(db: sqlite3.Connection) -> None:
         "monitored_cuis",
         "poll_state",
         "synced_messages",
-        "tracked_counterparties",
+        "watched_counterparties",
     ]
 
 
@@ -664,7 +664,7 @@ def test_indexes_exist(db: sqlite3.Connection) -> None:
     assert {"idx_msg_cui", "idx_msg_pending"}.issubset(names)
 
 
-def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
+def test_foreign_key_cascade_drops_watched_when_monitored_cui_removed(
     db: sqlite3.Connection,
 ) -> None:
     init_schema(db)
@@ -673,7 +673,7 @@ def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
         ("12345678", "Acme", "2026-05-04T10:00:00Z"),
     )
     db.execute(
-        "INSERT INTO tracked_counterparties(my_cui, counterparty_cui, added_at) VALUES (?,?,?)",
+        "INSERT INTO watched_counterparties(my_cui, counterparty_cui, added_at) VALUES (?,?,?)",
         ("12345678", "RO111", "2026-05-04T10:00:00Z"),
     )
     db.commit()
@@ -681,7 +681,7 @@ def test_foreign_key_cascade_drops_tracked_when_monitored_cui_removed(
     db.execute("DELETE FROM monitored_cuis WHERE cui = ?", ("12345678",))
     db.commit()
 
-    n = db.execute("SELECT count(*) FROM tracked_counterparties").fetchone()[0]
+    n = db.execute("SELECT count(*) FROM watched_counterparties").fetchone()[0]
     assert n == 0
 ```
 
@@ -710,7 +710,7 @@ CREATE TABLE IF NOT EXISTS monitored_cuis (
   added_at       TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS tracked_counterparties (
+CREATE TABLE IF NOT EXISTS watched_counterparties (
   my_cui            TEXT NOT NULL,
   counterparty_cui  TEXT NOT NULL,
   added_at          TEXT NOT NULL,
@@ -774,7 +774,7 @@ git commit -m "feat(storage): add sqlite schema and init"
 
 ---
 
-## Task 7 — `storage/db.py` monitored CUIs + tracked counterparties
+## Task 7 — `storage/db.py` monitored CUIs + watched counterparties
 
 **Files:**
 - Modify: `src/efactura_sync/storage/db.py`
@@ -790,13 +790,13 @@ import pytest
 from efactura_sync.storage.db import (
     MonitoredCui,
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     init_schema,
-    is_counterparty_tracked,
+    is_counterparty_watched,
     list_monitored_cuis,
-    list_tracked_counterparties,
+    list_watched_counterparties,
     remove_monitored_cui,
-    remove_tracked_counterparty,
+    remove_watched_counterparty,
 )
 
 
@@ -826,24 +826,24 @@ def test_remove_monitored_cui(db, now_utc) -> None:
     assert list_monitored_cuis(db) == []
 
 
-def test_track_add_list_remove(db, now_utc) -> None:
+def test_watch_add_list_remove(db, now_utc) -> None:
     init_schema(db)
     add_monitored_cui(db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
-    add_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO222", now=now_utc)
+    add_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111", now=now_utc)
+    add_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO222", now=now_utc)
 
-    assert sorted(list_tracked_counterparties(db, my_cui="12345678")) == ["RO111", "RO222"]
-    assert is_counterparty_tracked(db, my_cui="12345678", counterparty_cui="RO111") is True
-    assert is_counterparty_tracked(db, my_cui="12345678", counterparty_cui="UNKNOWN") is False
+    assert sorted(list_watched_counterparties(db, my_cui="12345678")) == ["RO111", "RO222"]
+    assert is_counterparty_watched(db, my_cui="12345678", counterparty_cui="RO111") is True
+    assert is_counterparty_watched(db, my_cui="12345678", counterparty_cui="UNKNOWN") is False
 
-    remove_tracked_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
-    assert list_tracked_counterparties(db, my_cui="12345678") == ["RO222"]
+    remove_watched_counterparty(db, my_cui="12345678", counterparty_cui="RO111")
+    assert list_watched_counterparties(db, my_cui="12345678") == ["RO222"]
 
 
-def test_add_tracked_counterparty_requires_existing_monitored_cui(db, now_utc) -> None:
+def test_add_watched_counterparty_requires_existing_monitored_cui(db, now_utc) -> None:
     init_schema(db)
     with pytest.raises(Exception):  # FK violation
-        add_tracked_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
+        add_watched_counterparty(db, my_cui="UNKNOWN", counterparty_cui="RO111", now=now_utc)
 ```
 
 - [x] **Step 2:** Run to verify failure
@@ -910,7 +910,7 @@ def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
     conn.commit()
 
 
-def add_tracked_counterparty(
+def add_watched_counterparty(
     conn: sqlite3.Connection,
     *,
     my_cui: str,
@@ -919,7 +919,7 @@ def add_tracked_counterparty(
 ) -> None:
     conn.execute(
         """
-        INSERT INTO tracked_counterparties(my_cui, counterparty_cui, added_at)
+        INSERT INTO watched_counterparties(my_cui, counterparty_cui, added_at)
         VALUES (?, ?, ?)
         ON CONFLICT(my_cui, counterparty_cui) DO NOTHING
         """,
@@ -928,29 +928,29 @@ def add_tracked_counterparty(
     conn.commit()
 
 
-def list_tracked_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
+def list_watched_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
     rows = conn.execute(
-        "SELECT counterparty_cui FROM tracked_counterparties WHERE my_cui = ? ORDER BY counterparty_cui",
+        "SELECT counterparty_cui FROM watched_counterparties WHERE my_cui = ? ORDER BY counterparty_cui",
         (my_cui,),
     ).fetchall()
     return [r[0] for r in rows]
 
 
-def is_counterparty_tracked(
+def is_counterparty_watched(
     conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
 ) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        "SELECT 1 FROM watched_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
         (my_cui, counterparty_cui),
     ).fetchone()
     return row is not None
 
 
-def remove_tracked_counterparty(
+def remove_watched_counterparty(
     conn: sqlite3.Connection, *, my_cui: str, counterparty_cui: str
 ) -> None:
     conn.execute(
-        "DELETE FROM tracked_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
+        "DELETE FROM watched_counterparties WHERE my_cui = ? AND counterparty_cui = ?",
         (my_cui, counterparty_cui),
     )
     conn.commit()
@@ -965,7 +965,7 @@ Expected: 8 passed.
 
 ```bash
 git add src/efactura_sync/storage/db.py tests/storage/test_db.py
-git commit -m "feat(storage): add monitored cui and tracked counterparty queries"
+git commit -m "feat(storage): add monitored cui and watched counterparty queries"
 ```
 
 ---
@@ -1143,11 +1143,11 @@ def test_mark_email_skipped_sets_reason(db, now_utc) -> None:
         msg_id="3001",
         cui="12345678",
         env="prod",
-        reason="filtered_by_track_list",
+        reason="filtered_by_watchlist",
         now=now_utc,
     )
     row = get_synced_message(db, msg_id="3001", cui="12345678", env="prod")
-    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_skip_reason == "filtered_by_watchlist"
     assert row.email_sent_at is None
 
 
@@ -3268,7 +3268,7 @@ from efactura_sync.errors import RenderError
 from efactura_sync.mail import EmailMessage, Mailer  # noqa: F401  (typing)
 from efactura_sync.storage.db import (
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     get_synced_message,
     init_schema,
 )
@@ -3357,10 +3357,10 @@ def _list_msg(**overrides: Any) -> ListMessage:
     return ListMessage(**{**base.__dict__, **overrides})
 
 
-def test_primita_tracked_supplier_archives_and_emails(deps: SyncDeps, now_utc) -> None:
+def test_primita_watched_supplier_archives_and_emails(deps: SyncDeps, now_utc) -> None:
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name="Acme", now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,
@@ -3382,10 +3382,10 @@ def test_primita_tracked_supplier_archives_and_emails(deps: SyncDeps, now_utc) -
     assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]
 
 
-def test_primita_untracked_supplier_archives_but_skips_email(deps: SyncDeps, now_utc) -> None:
+def test_primita_unwatched_supplier_archives_but_skips_email(deps: SyncDeps, now_utc) -> None:
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    # NOTE: no tracked counterparty added.
+    # NOTE: no watched counterparty added.
 
     process_one_message(
         deps,
@@ -3398,7 +3398,7 @@ def test_primita_untracked_supplier_archives_but_skips_email(deps: SyncDeps, now
 
     row = get_synced_message(deps.db, msg_id="3001", cui="12345678", env="prod")
     assert row.email_sent_at is None
-    assert row.email_skip_reason == "filtered_by_track_list"
+    assert row.email_skip_reason == "filtered_by_watchlist"
     assert deps.mailer.sent == []  # type: ignore[attr-defined]
 
 
@@ -3447,7 +3447,7 @@ def test_pdf_render_failure_still_sends_email_with_zip_only(deps: SyncDeps, now_
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     deps.renderer = FakeRenderer(fail=True)  # type: ignore[assignment]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     process_one_message(
         deps,
@@ -3741,10 +3741,10 @@ def _decide_skip_reason(deps: SyncDeps, *, my_cui: str, list_msg: ListMessage) -
         ) or dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env="test")
         if row is None or row.counterparty_cui is None:
             return None
-        if not dbq.is_counterparty_tracked(
+        if not dbq.is_counterparty_watched(
             deps.db, my_cui=my_cui, counterparty_cui=row.counterparty_cui
         ):
-            return "filtered_by_track_list"
+            return "filtered_by_watchlist"
     return None
 ```
 
@@ -3783,7 +3783,7 @@ def test_run_for_cui_polls_and_processes(deps: SyncDeps, now_utc) -> None:
         download_payload=_make_zip(UBL_FIXTURE),
     )
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     result = run_for_cui(deps, my_cui="12345678", env="prod", access_token="tok", now=now_utc)
 
@@ -3808,7 +3808,7 @@ def test_run_for_cui_uses_zile_window_from_poll_state(deps: SyncDeps, now_utc) -
 def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc) -> None:
     deps.anaf = FakeAnaf(list_response=[], download_payload=_make_zip(UBL_FIXTURE))  # type: ignore[assignment]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
-    add_tracked_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
     # Pre-existing pending row from a previous (crashed) run.
     process_one_message(  # this populates everything
         deps, my_cui="12345678", env="prod", access_token="tok",
@@ -3965,7 +3965,7 @@ def test_top_level_help() -> None:
     assert "auth" in result.stdout
     assert "sync" in result.stdout
     assert "cui" in result.stdout
-    assert "track" in result.stdout
+    assert "watch" in result.stdout
     assert "status" in result.stdout
     assert "replay" in result.stdout
 
@@ -4053,11 +4053,11 @@ from efactura_sync.config import load_config
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 auth_app = typer.Typer(no_args_is_help=True, help="OAuth token management.")
 cui_app = typer.Typer(no_args_is_help=True, help="Manage monitored CUIs.")
-track_app = typer.Typer(no_args_is_help=True, help="Manage PRIMITA email allow-list.")
+watch_app = typer.Typer(no_args_is_help=True, help="Manage PRIMITA email watchlist.")
 sync_app = typer.Typer(no_args_is_help=True, help="Run the daily sync.")
 app.add_typer(auth_app, name="auth")
 app.add_typer(cui_app, name="cui")
-app.add_typer(track_app, name="track")
+app.add_typer(watch_app, name="watch")
 app.add_typer(sync_app, name="sync")
 
 
@@ -4153,7 +4153,7 @@ git commit -m "feat(cli): add typer skeleton + auth login/refresh"
 
 ---
 
-## Task 21 — `cli.py` `cui` and `track` subcommands
+## Task 21 — `cli.py` `cui` and `watch` subcommands
 
 **Files:**
 - Modify: `src/efactura_sync/cli.py`
@@ -4164,7 +4164,7 @@ git commit -m "feat(cli): add typer skeleton + auth login/refresh"
 ```python
 import sqlite3
 
-from efactura_sync.storage.db import init_schema, list_monitored_cuis, list_tracked_counterparties
+from efactura_sync.storage.db import init_schema, list_monitored_cuis, list_watched_counterparties
 
 
 def _cli_args(tmp_path: Path, db_path: Path) -> list[str]:
@@ -4208,34 +4208,34 @@ def test_cui_add_list_remove(tmp_path: Path) -> None:
     assert list_monitored_cuis(conn) == []
 
 
-def test_track_add_list_remove(tmp_path: Path) -> None:
+def test_watch_add_list_remove(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
 
     r1 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["track", "add", "RO111", "--cui", "12345678"],
+        _cli_args(tmp_path, db_path) + ["watch", "add", "RO111", "--cui", "12345678"],
     )
     assert r1.exit_code == 0, r1.stdout
 
-    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["track", "list", "--cui", "12345678"])
+    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["watch", "list", "--cui", "12345678"])
     assert "RO111" in r2.stdout
 
     r3 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["track", "remove", "RO111", "--cui", "12345678"],
+        _cli_args(tmp_path, db_path) + ["watch", "remove", "RO111", "--cui", "12345678"],
     )
     assert r3.exit_code == 0
 
     conn = sqlite3.connect(db_path)
     init_schema(conn)
-    assert list_tracked_counterparties(conn, my_cui="12345678") == []
+    assert list_watched_counterparties(conn, my_cui="12345678") == []
 ```
 
 - [x] **Step 2:** Run to verify failure
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: failures (no `--db` option, no `cui`/`track` commands wired yet).
+Expected: failures (no `--db` option, no `cui`/`watch` commands wired yet).
 
 - [x] **Step 3:** Modify `src/efactura_sync/cli.py`
 
@@ -4280,12 +4280,12 @@ import sqlite3
 
 from efactura_sync.storage.db import (
     add_monitored_cui,
-    add_tracked_counterparty,
+    add_watched_counterparty,
     init_schema,
     list_monitored_cuis,
-    list_tracked_counterparties,
+    list_watched_counterparties,
     remove_monitored_cui,
-    remove_tracked_counterparty,
+    remove_watched_counterparty,
 )
 
 
@@ -4322,35 +4322,35 @@ def cui_remove(ctx: typer.Context, cui: str = typer.Argument(...)) -> None:
     typer.echo(f"OK — removed {cui}")
 
 
-@track_app.command("add")
-def track_add(
+@watch_app.command("add")
+def watch_add_cmd(
     ctx: typer.Context,
     counterparty_cui: str = typer.Argument(...),
     cui: str = typer.Option(..., "--cui"),
 ) -> None:
     conn = _open_db(ctx)
-    add_tracked_counterparty(
+    add_watched_counterparty(
         conn, my_cui=cui, counterparty_cui=counterparty_cui, now=datetime.now(timezone.utc)
     )
-    typer.echo(f"OK — tracking {counterparty_cui} for {cui}")
+    typer.echo(f"OK — watching {counterparty_cui} for {cui}")
 
 
-@track_app.command("list")
-def track_list(ctx: typer.Context, cui: str = typer.Option(..., "--cui")) -> None:
+@watch_app.command("list")
+def watch_list_cmd(ctx: typer.Context, cui: str = typer.Option(..., "--cui")) -> None:
     conn = _open_db(ctx)
-    for c in list_tracked_counterparties(conn, my_cui=cui):
+    for c in list_watched_counterparties(conn, my_cui=cui):
         typer.echo(c)
 
 
-@track_app.command("remove")
-def track_remove(
+@watch_app.command("remove")
+def watch_remove_cmd(
     ctx: typer.Context,
     counterparty_cui: str = typer.Argument(...),
     cui: str = typer.Option(..., "--cui"),
 ) -> None:
     conn = _open_db(ctx)
-    remove_tracked_counterparty(conn, my_cui=cui, counterparty_cui=counterparty_cui)
-    typer.echo(f"OK — untracked {counterparty_cui} for {cui}")
+    remove_watched_counterparty(conn, my_cui=cui, counterparty_cui=counterparty_cui)
+    typer.echo(f"OK — unwatched {counterparty_cui} for {cui}")
 ```
 
 - [x] **Step 4:** Run to verify it passes
@@ -4362,7 +4362,7 @@ Expected: 4 passed.
 
 ```bash
 git add src/efactura_sync/cli.py tests/test_cli.py
-git commit -m "feat(cli): add cui and track subcommands"
+git commit -m "feat(cli): add cui and watch subcommands"
 ```
 
 ---
@@ -4858,7 +4858,7 @@ scp ~/.config/efactura-sync/tokens/12345678.prod.json server:~/.config/efactura-
 Add suppliers to email allow-list:
 
 ```bash
-uv run efactura-sync track add RO87654321 --cui 12345678
+uv run efactura-sync watch add RO87654321 --cui 12345678
 ```
 
 ## Daily run (server)

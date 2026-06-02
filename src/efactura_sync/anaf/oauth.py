@@ -205,9 +205,9 @@ def refresh_access_token(
         data={
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "token_content_type": "jwt",
         },
+        auth=(client_id, client_secret),
         headers={"User-Agent": USER_AGENT},
         timeout=30.0,
     )

@@ -54,6 +54,7 @@ def test_refresh_access_token_success() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["body"] = request.content.decode() if request.content else ""
+        captured["auth"] = request.headers.get("authorization", "")
         return httpx.Response(
             200,
             json={
@@ -83,9 +84,11 @@ def test_refresh_access_token_success() -> None:
     assert result.obtained_at == now
     assert result.expires_at == now + timedelta(seconds=7776000)
     body = str(captured["body"])
-    assert "client_id=cid" in body
     assert "refresh_token=old-ref" in body
     assert "grant_type=refresh_token" in body
+    assert "token_content_type=jwt" in body
+    assert "client_secret" not in body  # creds now in the Basic Auth header
+    assert str(captured["auth"]).startswith("Basic ")
 
 
 def test_refresh_token_400_raises_refresh_expired() -> None:

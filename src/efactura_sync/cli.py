@@ -1,12 +1,9 @@
 """Typer CLI."""
 
-import os
 import socket
 import sqlite3
 import traceback
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import cast
 
 import httpx
@@ -23,6 +20,7 @@ from efactura_sync.anaf.oauth import (
 from efactura_sync.config import Config, load_config
 from efactura_sync.errors import AuthError
 from efactura_sync.mail import Mailer, render_failure_email
+from efactura_sync.paths import PathConfigError, Paths, resolve_paths
 from efactura_sync.render import PdfRenderer
 from efactura_sync.storage.db import (
     add_monitored_cui,
@@ -50,51 +48,6 @@ app.add_typer(cui_app, name="cui")
 app.add_typer(watch_app, name="watch")
 app.add_typer(sync_app, name="sync")
 
-def _xdg_base_dir(env_var: str, fallback_subpath: tuple[str, ...]) -> Path:
-    """Resolve an XDG base directory per the spec.
-
-    Returns ``$<env_var>`` if it is set, non-empty, and absolute. Otherwise
-    returns ``Path.home().joinpath(*fallback_subpath)``. Relative values are
-    ignored per the XDG Base Directory Specification.
-    """
-    raw = os.environ.get(env_var, "")
-    if raw:
-        candidate = Path(raw)
-        if candidate.is_absolute():
-            return candidate
-    return Path.home().joinpath(*fallback_subpath)
-
-
-def _xdg_config_home() -> Path:
-    return _xdg_base_dir("XDG_CONFIG_HOME", (".config",))
-
-
-def _xdg_data_home() -> Path:
-    return _xdg_base_dir("XDG_DATA_HOME", (".local", "share"))
-
-
-_DEFAULT_CONFIG_DIR = _xdg_config_home() / "efactura-sync"
-_DEFAULT_DATA_DIR = _xdg_data_home() / "efactura-sync"
-_OPT_CONFIG = typer.Option(
-    _DEFAULT_CONFIG_DIR / "config.toml",
-    "--config",
-    help="Path to config.toml",
-)
-_OPT_SECRETS = typer.Option(
-    _DEFAULT_CONFIG_DIR / "secrets.toml",
-    "--secrets",
-    help="Path to secrets.toml",
-)
-_OPT_TOKENS_DIR = typer.Option(
-    _DEFAULT_CONFIG_DIR / "tokens",
-    "--tokens-dir",
-    help="Directory holding per-CUI OAuth token files.",
-)
-_OPT_DB = typer.Option(
-    _DEFAULT_DATA_DIR / "state.db",
-    "--db",
-    help="Path to SQLite state database.",
-)
 _OPT_CUI_LOGIN = typer.Option(..., "--cui", help="CUI being authorized")
 _OPT_CUI = typer.Option(..., "--cui")
 _OPT_ENV = typer.Option("prod", "--env")
@@ -116,28 +69,13 @@ _OPT_DRY_RUN = typer.Option(
 _REPLAY_MSG_ID_ARG = typer.Argument(..., help="ANAF message id to replay.")
 
 
-@dataclass(frozen=True)
-class _CliContext:
-    config_path: Path
-    secrets_path: Path
-    tokens_dir: Path
-    db_path: Path
-
-
 @app.callback()
-def _main(
-    ctx: typer.Context,
-    config: Path = _OPT_CONFIG,
-    secrets: Path = _OPT_SECRETS,
-    tokens_dir: Path = _OPT_TOKENS_DIR,
-    db_path: Path = _OPT_DB,
-) -> None:
-    ctx.obj = _CliContext(
-        config_path=config,
-        secrets_path=secrets,
-        tokens_dir=tokens_dir,
-        db_path=db_path,
-    )
+def _main(ctx: typer.Context) -> None:
+    try:
+        ctx.obj = resolve_paths()
+    except PathConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 def _validate_env(env: str) -> Env:
@@ -147,9 +85,9 @@ def _validate_env(env: str) -> Env:
     return cast(Env, env)
 
 
-def _ctx(ctx: typer.Context) -> _CliContext:
+def _ctx(ctx: typer.Context) -> Paths:
     obj = ctx.obj
-    if not isinstance(obj, _CliContext):
+    if not isinstance(obj, Paths):
         raise RuntimeError(f"typer context not initialized: got {type(obj).__name__}")
     return obj
 
@@ -163,7 +101,7 @@ def _open_db(ctx: typer.Context) -> sqlite3.Connection:
     return conn
 
 
-def _prepare(ctx: typer.Context, env: str) -> tuple[_CliContext, Config, Env, str, str, datetime]:
+def _prepare(ctx: typer.Context, env: str) -> tuple[Paths, Config, Env, str, str, datetime]:
     """Run the common preamble for any command that needs config + ANAF creds.
 
     Returns (cli_ctx, cfg, env_typed, client_id, client_secret, now_utc).
@@ -357,7 +295,7 @@ def sync_run_cmd(
                 typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
             return
 
-        archive_root = cfg.archive_root
+        archive_root = cli_ctx.archive_dir
 
         cui_in_progress: str | None = None
         step: str | None = None

@@ -20,6 +20,18 @@ from efactura_sync.storage.db import (
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _env_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point the CLI at tmp_path via env vars and write valid config + secrets.
+
+    Autouse so every CLI test runs against a working config dir. Tests that need
+    a missing-config or unset-env scenario override these via monkeypatch.
+    """
+    _write_fixture_files(tmp_path)
+    monkeypatch.setenv("EFACTURA_SYNC_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("EFACTURA_SYNC_ARCHIVE_DIR", str(tmp_path / "archive"))
+
+
 def _write_fixture_files(tmp_path: Path) -> tuple[Path, Path]:
     """Write minimal valid config.toml + secrets.toml; return their paths."""
     config_file = tmp_path / "config.toml"
@@ -67,24 +79,9 @@ def test_auth_login_invokes_oauth_and_writes_token(
 
     monkeypatch.setattr("efactura_sync.cli.auth_code_login", fake_login)
 
-    config_file, secrets_file = _write_fixture_files(tmp_path)
-
     result = runner.invoke(
         app,
-        [
-            "--config",
-            str(config_file),
-            "--secrets",
-            str(secrets_file),
-            "--tokens-dir",
-            str(tmp_path / "tokens"),
-            "auth",
-            "login",
-            "--cui",
-            "12345678",
-            "--env",
-            "prod",
-        ],
+        ["auth", "login", "--cui", "12345678", "--env", "prod"],
     )
     assert result.exit_code == 0, result.stdout
     assert captured["cui"] == "12345678"
@@ -94,24 +91,9 @@ def test_auth_login_invokes_oauth_and_writes_token(
 
 
 def test_invalid_env_exits_two(tmp_path: Path) -> None:
-    config_file, secrets_file = _write_fixture_files(tmp_path)
-
     result = runner.invoke(
         app,
-        [
-            "--config",
-            str(config_file),
-            "--secrets",
-            str(secrets_file),
-            "--tokens-dir",
-            str(tmp_path / "tokens"),
-            "auth",
-            "login",
-            "--cui",
-            "12345678",
-            "--env",
-            "staging",
-        ],
+        ["auth", "login", "--cui", "12345678", "--env", "staging"],
     )
     assert result.exit_code == 2
     # Error message goes to stderr; combine streams for robustness across Click versions.
@@ -154,23 +136,9 @@ def test_auth_refresh_loads_and_writes_new_token(
 
     monkeypatch.setattr("efactura_sync.cli.refresh_access_token", fake_refresh)
 
-    config_file, secrets_file = _write_fixture_files(tmp_path)
     result = runner.invoke(
         app,
-        [
-            "--config",
-            str(config_file),
-            "--secrets",
-            str(secrets_file),
-            "--tokens-dir",
-            str(tokens_dir),
-            "auth",
-            "refresh",
-            "--cui",
-            "12345678",
-            "--env",
-            "prod",
-        ],
+        ["auth", "refresh", "--cui", "12345678", "--env", "prod"],
     )
     assert result.exit_code == 0, result.stdout
     # The fake_refresh got called with the existing refresh_token.
@@ -183,24 +151,14 @@ def test_auth_refresh_loads_and_writes_new_token(
     assert persisted.refresh_token == "new-ref"
 
 
-def test_auth_login_missing_config_exits_nonzero(tmp_path: Path) -> None:
-    # Don't write the config file.
+def test_auth_login_missing_config_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Point at an empty config dir so config.toml/secrets.toml are absent.
+    monkeypatch.setenv("EFACTURA_SYNC_CONFIG_DIR", str(tmp_path / "empty"))
     result = runner.invoke(
         app,
-        [
-            "--config",
-            str(tmp_path / "missing-config.toml"),
-            "--secrets",
-            str(tmp_path / "missing-secrets.toml"),
-            "--tokens-dir",
-            str(tmp_path / "tokens"),
-            "auth",
-            "login",
-            "--cui",
-            "12345678",
-            "--env",
-            "prod",
-        ],
+        ["auth", "login", "--cui", "12345678", "--env", "prod"],
     )
     assert result.exit_code != 0
 
@@ -215,58 +173,27 @@ def test_auth_login_propagates_oauth_failure(
 
     monkeypatch.setattr("efactura_sync.cli.auth_code_login", fake_login_failing)
 
-    config_file, secrets_file = _write_fixture_files(tmp_path)
     result = runner.invoke(
         app,
-        [
-            "--config",
-            str(config_file),
-            "--secrets",
-            str(secrets_file),
-            "--tokens-dir",
-            str(tmp_path / "tokens"),
-            "auth",
-            "login",
-            "--cui",
-            "12345678",
-            "--env",
-            "prod",
-        ],
+        ["auth", "login", "--cui", "12345678", "--env", "prod"],
     )
     assert result.exit_code != 0
     # No token file should have been written.
     assert not (tmp_path / "tokens" / "12345678.prod.json").exists()
 
 
-def _cli_args(tmp_path: Path, db_path: Path) -> list[str]:
-    """Build the global option args for any CLI invocation."""
-    config_file, secrets_file = _write_fixture_files(tmp_path)
-    return [
-        "--config",
-        str(config_file),
-        "--secrets",
-        str(secrets_file),
-        "--tokens-dir",
-        str(tmp_path / "tokens"),
-        "--db",
-        str(db_path),
-    ]
-
-
 def test_cui_add_list_remove(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
 
-    r1 = runner.invoke(
-        app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678", "--name", "Acme"]
-    )
+    r1 = runner.invoke(app, ["cui", "add", "12345678", "--name", "Acme"])
     assert r1.exit_code == 0, r1.stdout
 
-    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "list"])
+    r2 = runner.invoke(app, ["cui", "list"])
     assert r2.exit_code == 0, r2.stdout
     assert "12345678" in r2.stdout
     assert "Acme" in r2.stdout
 
-    r3 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "remove", "12345678"])
+    r3 = runner.invoke(app, ["cui", "remove", "12345678"])
     assert r3.exit_code == 0, r3.stdout
 
     # Verify by re-opening the DB directly: nothing left.
@@ -279,8 +206,8 @@ def test_cui_add_list_remove(tmp_path: Path) -> None:
 
 
 def test_cui_list_empty(tmp_path: Path) -> None:
-    db_path = tmp_path / "state.db"
-    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "list"])
+    tmp_path / "state.db"
+    result = runner.invoke(app, ["cui", "list"])
     assert result.exit_code == 0, result.stdout
     assert "no monitored CUIs" in result.stdout
 
@@ -288,21 +215,21 @@ def test_cui_list_empty(tmp_path: Path) -> None:
 def test_watch_add_list_remove(tmp_path: Path) -> None:
     db_path = tmp_path / "state.db"
     # Register the parent monitored CUI first.
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    runner.invoke(app, ["cui", "add", "12345678"])
 
     r1 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["watch", "add", "RO111", "--cui", "12345678"],
+        ["watch", "add", "RO111", "--cui", "12345678"],
     )
     assert r1.exit_code == 0, r1.stdout
 
-    r2 = runner.invoke(app, _cli_args(tmp_path, db_path) + ["watch", "list", "--cui", "12345678"])
+    r2 = runner.invoke(app, ["watch", "list", "--cui", "12345678"])
     assert r2.exit_code == 0, r2.stdout
     assert "RO111" in r2.stdout
 
     r3 = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["watch", "remove", "RO111", "--cui", "12345678"],
+        ["watch", "remove", "RO111", "--cui", "12345678"],
     )
     assert r3.exit_code == 0, r3.stdout
 
@@ -316,11 +243,10 @@ def test_watch_add_list_remove(tmp_path: Path) -> None:
 
 def test_watch_add_without_parent_cui_fails(tmp_path: Path) -> None:
     """watch add requires the parent monitored CUI to exist first (FK constraint)."""
-    db_path = tmp_path / "state.db"
+    tmp_path / "state.db"
     result = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path)
-        + ["watch", "add", "RO111", "--cui", "12345678"],  # 12345678 not added
+        ["watch", "add", "RO111", "--cui", "12345678"],  # 12345678 not added
     )
     assert result.exit_code != 0
 
@@ -328,13 +254,13 @@ def test_watch_add_without_parent_cui_fails(tmp_path: Path) -> None:
 def test_cui_remove_cascades_to_watched(tmp_path: Path) -> None:
     """`cui remove` should also remove rows in watched_counterparties (FK CASCADE)."""
     db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    runner.invoke(app, ["cui", "add", "12345678"])
     runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["watch", "add", "RO111", "--cui", "12345678"],
+        ["watch", "add", "RO111", "--cui", "12345678"],
     )
 
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "remove", "12345678"])
+    runner.invoke(app, ["cui", "remove", "12345678"])
 
     conn = _sqlite3.connect(db_path)
     _init_schema(conn)
@@ -349,9 +275,9 @@ def test_cui_remove_cascades_to_watched(tmp_path: Path) -> None:
 def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    db_path = tmp_path / "state.db"
+    tmp_path / "state.db"
     # Pre-populate one monitored CUI.
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    runner.invoke(app, ["cui", "add", "12345678"])
     # Pre-create a non-expired token file so needs_refresh is False.
     save_token(
         tmp_path / "tokens",
@@ -375,7 +301,7 @@ def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(
 
     monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
 
-    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    result = runner.invoke(app, ["sync", "run", "--env", "prod"])
     assert result.exit_code == 0, result.stdout
     assert calls == ["12345678"]
     # Output mentions the cui and counts.
@@ -385,8 +311,8 @@ def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(
 
 
 def test_sync_run_dry_run_skips_real_work(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    tmp_path / "state.db"
+    runner.invoke(app, ["cui", "add", "12345678"])
 
     calls: list[object] = []
 
@@ -398,7 +324,7 @@ def test_sync_run_dry_run_skips_real_work(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     result = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--dry-run"],
+        ["sync", "run", "--env", "prod", "--dry-run"],
     )
     assert result.exit_code == 0, result.stdout
     assert calls == []
@@ -408,10 +334,10 @@ def test_sync_run_dry_run_skips_real_work(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_status_lists_cuis_and_token_state(tmp_path: Path) -> None:
-    db_path = tmp_path / "state.db"
+    tmp_path / "state.db"
     runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["cui", "add", "12345678", "--name", "Acme"],
+        ["cui", "add", "12345678", "--name", "Acme"],
     )
     save_token(
         tmp_path / "tokens",
@@ -425,7 +351,7 @@ def test_status_lists_cuis_and_token_state(tmp_path: Path) -> None:
         ),
     )
 
-    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["status", "--env", "prod"])
+    result = runner.invoke(app, ["status", "--env", "prod"])
     assert result.exit_code == 0, result.stdout
     assert "12345678" in result.stdout
     assert "Acme" in result.stdout
@@ -437,7 +363,7 @@ def test_replay_clears_step_markers(tmp_path: Path) -> None:
     from datetime import date
 
     db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    runner.invoke(app, ["cui", "add", "12345678"])
 
     # Pre-populate a synced_messages row that's fully done.
     from efactura_sync.storage.db import (
@@ -479,7 +405,7 @@ def test_replay_clears_step_markers(tmp_path: Path) -> None:
 
     result = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["replay", "3001", "--cui", "12345678", "--env", "prod"],
+        ["replay", "3001", "--cui", "12345678", "--env", "prod"],
     )
     assert result.exit_code == 0, result.stdout
 
@@ -499,8 +425,8 @@ def test_replay_clears_step_markers(tmp_path: Path) -> None:
 
 def test_sync_run_refreshes_expiring_token(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """If the stored token is within the refresh buffer, sync run refreshes it."""
-    db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    tmp_path / "state.db"
+    runner.invoke(app, ["cui", "add", "12345678"])
 
     # Pre-save a token that's already past expiry — needs_refresh returns True.
     save_token(
@@ -539,7 +465,7 @@ def test_sync_run_refreshes_expiring_token(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setattr("efactura_sync.cli.refresh_access_token", fake_refresh)
     monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
 
-    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    result = runner.invoke(app, ["sync", "run", "--env", "prod"])
     assert result.exit_code == 0, result.stdout
 
     # Refresh was called with the old refresh_token.
@@ -553,9 +479,9 @@ def test_sync_run_filter_matches_one_of_many(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`--cui X` runs only X, not the others."""
-    db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "11111111"])
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "22222222"])
+    tmp_path / "state.db"
+    runner.invoke(app, ["cui", "add", "11111111"])
+    runner.invoke(app, ["cui", "add", "22222222"])
 
     for cui in ("11111111", "22222222"):
         save_token(
@@ -582,7 +508,7 @@ def test_sync_run_filter_matches_one_of_many(
 
     result = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--cui", "11111111"],
+        ["sync", "run", "--env", "prod", "--cui", "11111111"],
     )
     assert result.exit_code == 0, result.stdout
     assert calls == ["11111111"]
@@ -590,12 +516,12 @@ def test_sync_run_filter_matches_one_of_many(
 
 def test_sync_run_filter_unregistered_cui_exits_two(tmp_path: Path) -> None:
     """`--cui Y` where Y isn't in monitored_cuis exits 2 with a clear message."""
-    db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "11111111"])
+    tmp_path / "state.db"
+    runner.invoke(app, ["cui", "add", "11111111"])
 
     result = runner.invoke(
         app,
-        _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod", "--cui", "99999999"],
+        ["sync", "run", "--env", "prod", "--cui", "99999999"],
     )
     assert result.exit_code == 2
     combined = (result.stdout or "") + (result.stderr or "")
@@ -606,8 +532,8 @@ def test_sync_run_filter_unregistered_cui_exits_two(tmp_path: Path) -> None:
 def test_sync_run_sends_failure_email_on_uncaught_exception(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    db_path = tmp_path / "state.db"
-    runner.invoke(app, _cli_args(tmp_path, db_path) + ["cui", "add", "12345678"])
+    tmp_path / "state.db"
+    runner.invoke(app, ["cui", "add", "12345678"])
 
     save_token(
         tmp_path / "tokens",
@@ -637,7 +563,7 @@ def test_sync_run_sends_failure_email_on_uncaught_exception(
 
     monkeypatch.setattr("efactura_sync.cli.run_for_cui", boom)
 
-    result = runner.invoke(app, _cli_args(tmp_path, db_path) + ["sync", "run", "--env", "prod"])
+    result = runner.invoke(app, ["sync", "run", "--env", "prod"])
     assert result.exit_code != 0
     assert sent, "expected a failure email"
     msg, to_addr = sent[0]
@@ -648,68 +574,9 @@ def test_sync_run_sends_failure_email_on_uncaught_exception(
 # --- XDG base directory helpers ------------------------------------------
 
 
-class TestXdgBaseDir:
-    """Unit tests for the XDG base-directory resolution helper."""
-
-    def test_unset_env_returns_home_fallback(self, monkeypatch, tmp_path) -> None:
-        from efactura_sync.cli import _xdg_base_dir
-
-        monkeypatch.delenv("FAKE_XDG_HOME", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
-
-        assert result == tmp_path / ".config"
-
-    def test_empty_env_returns_home_fallback(self, monkeypatch, tmp_path) -> None:
-        from efactura_sync.cli import _xdg_base_dir
-
-        monkeypatch.setenv("FAKE_XDG_HOME", "")
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        result = _xdg_base_dir("FAKE_XDG_HOME", (".local", "share"))
-
-        assert result == tmp_path / ".local" / "share"
-
-    def test_relative_env_is_ignored_per_spec(self, monkeypatch, tmp_path) -> None:
-        """Per XDG spec: relative paths MUST be ignored."""
-        from efactura_sync.cli import _xdg_base_dir
-
-        monkeypatch.setenv("FAKE_XDG_HOME", "relative/not-absolute")
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
-
-        assert result == tmp_path / ".config"
-
-    def test_absolute_env_is_used_verbatim(self, monkeypatch, tmp_path) -> None:
-        from efactura_sync.cli import _xdg_base_dir
-
-        target = tmp_path / "custom" / "xdg"
-        monkeypatch.setenv("FAKE_XDG_HOME", str(target))
-
-        result = _xdg_base_dir("FAKE_XDG_HOME", (".config",))
-
-        assert result == target
-
-    def test_default_config_dir_matches_fallback_when_unset(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        """When XDG_CONFIG_HOME is unset, _xdg_config_home() returns ~/.config."""
-        from efactura_sync.cli import _xdg_config_home
-
-        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        assert _xdg_config_home() == tmp_path / ".config"
-
-    def test_default_data_dir_matches_fallback_when_unset(
-        self, monkeypatch, tmp_path
-    ) -> None:
-        """When XDG_DATA_HOME is unset, _xdg_data_home() returns ~/.local/share."""
-        from efactura_sync.cli import _xdg_data_home
-
-        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
-
-        assert _xdg_data_home() == tmp_path / ".local" / "share"
+def test_missing_config_dir_env_exits_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EFACTURA_SYNC_CONFIG_DIR", raising=False)
+    result = runner.invoke(app, ["cui", "list"])
+    assert result.exit_code == 2
+    combined = (result.stdout or "") + (result.stderr or "")
+    assert "EFACTURA_SYNC_CONFIG_DIR is not set" in combined

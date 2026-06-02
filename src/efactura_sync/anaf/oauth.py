@@ -7,7 +7,6 @@ code can be exchanged. Refresh and load/save are usable on the headless server.
 """
 
 import json
-import logging
 import os
 import secrets as _secrets
 import urllib.parse
@@ -20,8 +19,6 @@ import httpx
 from efactura_sync import USER_AGENT
 from efactura_sync.errors import AuthError, RefreshTokenExpired
 from efactura_sync.types import Env
-
-_log = logging.getLogger(__name__)
 
 _TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
 _AUTHORIZE_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
@@ -122,22 +119,56 @@ def build_authorize_url(*, client_id: str, redirect_uri: str) -> tuple[str, str]
 
 
 def _extract_code_state(redirect_response: str) -> tuple[str, str | None, bool]:
-    """Parse a pasted redirect into ``(code, state, is_url)``.
+    """Parse a pasted redirect into ``(code, state, from_url)``.
 
-    A full URL (or any string with a query) yields ``is_url=True`` and the
-    ``state`` ANAF echoed (or ``None`` if absent). A bare code yields
-    ``is_url=False`` and ``state=None`` — there is no state to verify.
+    A full URL (one with a scheme or a query string) yields ``from_url=True``
+    and the ``state`` ANAF echoed (or ``None`` if the query lacked it). A bare
+    code yields ``from_url=False`` and ``state=None`` — there is no state to
+    verify. The caller enforces state strictly for URL pastes but allows a bare
+    code without one.
     """
     s = redirect_response.strip()
-    is_url = "?" in s or s.lower().startswith("http")
-    if is_url:
-        parsed = urllib.parse.urlparse(s)
-        params = urllib.parse.parse_qs(parsed.query)
-        code = params.get("code", [""])[0]
-        state_values = params.get("state")
-        state = state_values[0] if state_values else None
-        return code, state, True
-    return s, None, False
+    parsed = urllib.parse.urlparse(s)
+    if not (parsed.scheme or parsed.query):
+        return s, None, False
+    params = urllib.parse.parse_qs(parsed.query)
+    code = params.get("code", [""])[0]
+    state_values = params.get("state")
+    return code, (state_values[0] if state_values else None), True
+
+
+def _token_from_body(
+    body: object,
+    *,
+    cui: str,
+    env: Env,
+    now: datetime,
+    fallback_refresh_token: str | None = None,
+) -> Token:
+    """Build a :class:`Token` from a parsed token-endpoint JSON body.
+
+    Raises :class:`AuthError` (never a raw ``KeyError``) when the response is
+    not a JSON object or omits required fields. ``fallback_refresh_token`` lets
+    the refresh path retain the previous refresh token when ANAF does not return
+    a new one.
+    """
+    if not isinstance(body, dict):
+        raise AuthError(f"unexpected token response (not a JSON object): {body!r:.200}")
+    access_token = body.get("access_token")
+    if not access_token:
+        raise AuthError(f"token response missing access_token: {body!r:.200}")
+    refresh_token = body.get("refresh_token") or fallback_refresh_token
+    if not refresh_token:
+        raise AuthError("token response missing refresh_token")
+    expires_in = int(body.get("expires_in", 0))
+    return Token(
+        cui=cui,
+        env=env,
+        access_token=str(access_token),
+        refresh_token=str(refresh_token),
+        expires_at=now + timedelta(seconds=expires_in),
+        obtained_at=now,
+    )
 
 
 def exchange_code(
@@ -156,12 +187,13 @@ def exchange_code(
 
     ``redirect_response`` is either the full URL ANAF redirected to (read from
     the browser address bar) or a bare code. When a URL is pasted, the echoed
-    ``state`` MUST equal ``expected_state`` (strict CSRF check).
+    ``state`` MUST equal ``expected_state`` (strict CSRF check); a bare code
+    carries no state and is accepted without one.
     """
-    code, state, is_url = _extract_code_state(redirect_response)
+    code, state, from_url = _extract_code_state(redirect_response)
     if not code:
         raise AuthError("no authorization code found in pasted redirect")
-    if is_url and state != expected_state:
+    if from_url and state != expected_state:
         raise AuthError("state mismatch on ANAF redirect")
     resp = http.post(
         _TOKEN_URL,
@@ -178,16 +210,7 @@ def exchange_code(
     if resp.status_code != 200:
         snippet = resp.content[:200].decode("utf-8", "replace")
         raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {snippet}")
-    body = resp.json()
-    expires_in = int(body.get("expires_in", 0))
-    return Token(
-        cui=cui,
-        env=env,
-        access_token=body["access_token"],
-        refresh_token=body["refresh_token"],
-        expires_at=now + timedelta(seconds=expires_in),
-        obtained_at=now,
-    )
+    return _token_from_body(resp.json(), cui=cui, env=env, now=now)
 
 
 def refresh_access_token(
@@ -223,13 +246,6 @@ def refresh_access_token(
     if resp.status_code != 200:
         snippet = resp.content[:200].decode("utf-8", "replace")
         raise AuthError(f"refresh failed (HTTP {resp.status_code}): {snippet}")
-    body = resp.json()
-    expires_in = int(body.get("expires_in", 0))
-    return Token(
-        cui=cui,
-        env=env,
-        access_token=body["access_token"],
-        refresh_token=body.get("refresh_token", refresh_token),
-        expires_at=now + timedelta(seconds=expires_in),
-        obtained_at=now,
+    return _token_from_body(
+        resp.json(), cui=cui, env=env, now=now, fallback_refresh_token=refresh_token
     )

@@ -270,3 +270,44 @@ def test_exchange_code_missing_code_raises() -> None:
             expected_state="S1",
             now=datetime(2026, 5, 4, tzinfo=UTC),
         )
+
+
+def test_exchange_code_url_without_state_raises() -> None:
+    # Strict CSRF: a URL paste must echo the state; its absence is rejected.
+    from efactura_sync.anaf.oauth import exchange_code
+
+    http = httpx.Client(transport=httpx.MockTransport(_exchange_handler({})))
+    with pytest.raises(AuthError, match="state mismatch"):
+        exchange_code(
+            http=http,
+            env="prod",
+            client_id="cid",
+            client_secret="cs",
+            cui="12345678",
+            redirect_uri="https://example.com/cb",
+            redirect_response="https://example.com/cb?code=abc",  # URL, no state
+            expected_state="S1",
+            now=datetime(2026, 5, 4, tzinfo=UTC),
+        )
+
+
+def test_exchange_code_missing_refresh_token_raises_auth_error() -> None:
+    # A 200 response missing refresh_token must raise AuthError, not KeyError.
+    from efactura_sync.anaf.oauth import exchange_code
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "acc", "expires_in": 100})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(AuthError, match="missing refresh_token"):
+        exchange_code(
+            http=http,
+            env="prod",
+            client_id="cid",
+            client_secret="cs",
+            cui="12345678",
+            redirect_uri="https://example.com/cb",
+            redirect_response="https://example.com/cb?code=abc&state=S1",
+            expected_state="S1",
+            now=datetime(2026, 5, 4, tzinfo=UTC),
+        )

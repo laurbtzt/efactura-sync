@@ -1,12 +1,9 @@
 """Load and validate TOML configuration."""
 
-import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
-
-from platformdirs import user_data_path
 
 from efactura_sync.errors import ConfigError
 from efactura_sync.types import Env
@@ -37,7 +34,6 @@ class AnafConfig:
 
 @dataclass(frozen=True)
 class Config:
-    archive_root: Path
     smtp: SmtpConfig
     anaf: AnafConfig
     log_level: str
@@ -84,13 +80,6 @@ def load_config(*, config_path: Path, secrets_path: Path) -> Config:
         raise ConfigError(f"invalid anaf.default_env: {default_env_raw!r}")
     default_env = cast(Env, default_env_raw)
 
-    archive_root_raw = cfg.get("archive", {}).get("root")
-    if archive_root_raw:
-        expanded = os.path.expandvars(str(archive_root_raw))
-        archive_root = Path(expanded).expanduser()
-    else:
-        archive_root = user_data_path("efactura-sync", appauthor=False) / "archive"
-
     port = int(smtp_cfg["port"])
     if not (1 <= port <= 65535):
         raise ConfigError(f"invalid smtp.port: {port} (must be 1..65535)")
@@ -113,7 +102,6 @@ def load_config(*, config_path: Path, secrets_path: Path) -> Config:
         test_client_secret=str(anaf_test["client_secret"]),
     )
     return Config(
-        archive_root=archive_root,
         smtp=smtp,
         anaf=anaf,
         log_level=str(log_cfg.get("level", "INFO")),

@@ -60,27 +60,33 @@ chmod 600 ~/.config/efactura-sync/secrets.toml
 
 ## Configuration paths
 
-By default, `efactura-sync` follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html):
+All paths come from environment variables — there is no XDG, `$HOME`, or
+config-file fallback. The two base variables are **required**; every command
+exits with code `2` if one is unset:
 
-| What | Default location |
-|---|---|
-| `config.toml`, `secrets.toml`, `tokens/` | `${XDG_CONFIG_HOME:-$HOME/.config}/efactura-sync/` |
-| `state.db` | `${XDG_DATA_HOME:-$HOME/.local/share}/efactura-sync/` |
+| Variable | Required | Resolves |
+|---|---|---|
+| `EFACTURA_SYNC_CONFIG_DIR` | yes | holds `config.toml`, `secrets.toml`, and the defaults below |
+| `EFACTURA_SYNC_ARCHIVE_DIR` | yes | archive root for downloaded ZIPs and rendered PDFs |
+| `EFACTURA_SYNC_DB` | optional | path to the SQLite database (default `$EFACTURA_SYNC_CONFIG_DIR/state.db`) |
+| `EFACTURA_SYNC_TOKENS_DIR` | optional | per-CUI OAuth token directory (default `$EFACTURA_SYNC_CONFIG_DIR/tokens`) |
 
-To put configuration somewhere else, set the relevant env var before running the CLI:
+`config.toml` and `secrets.toml` always live directly under
+`EFACTURA_SYNC_CONFIG_DIR`. Set the variables once in your shell profile or the
+systemd/cron environment:
 
 ```bash
-XDG_CONFIG_HOME="$HOME/.dotfiles/config" uv run efactura-sync status
+export EFACTURA_SYNC_CONFIG_DIR="$HOME/.config/efactura-sync"
+export EFACTURA_SYNC_ARCHIVE_DIR="$HOME/efactura-archive"
+uv run efactura-sync status --env prod
 ```
 
-Per the XDG spec, the env var must be an **absolute** path; empty or relative values are ignored and the `$HOME`-based fallback is used.
+A missing required variable fails fast:
 
-For one-off overrides, the following flags take precedence over the XDG defaults on every command:
-
-- `--config <path>` — path to `config.toml`
-- `--secrets <path>` — path to `secrets.toml`
-- `--tokens-dir <path>` — directory holding per-CUI OAuth token files
-- `--db <path>` — path to the SQLite state database
+```
+$ efactura-sync sync run
+error: EFACTURA_SYNC_CONFIG_DIR is not set
+```
 
 ## Onboard a CUI
 
@@ -91,7 +97,8 @@ uv run efactura-sync cui add 12345678 --name "Acme SRL"
 uv run efactura-sync auth login --cui 12345678 --env prod
 # Browser opens, ANAF asks for cert PIN, finishes silently.
 # Then copy the token to the server:
-scp ~/.config/efactura-sync/tokens/12345678.prod.json server:~/.config/efactura-sync/tokens/
+scp "$EFACTURA_SYNC_CONFIG_DIR/tokens/12345678.prod.json" \
+    server:"$EFACTURA_SYNC_CONFIG_DIR/tokens/"
 ```
 
 Add suppliers to the email allow-list (used by PRIMITA email gating once mail is wired):
@@ -103,12 +110,17 @@ uv run efactura-sync watch add RO87654321 --cui 12345678
 ## Daily run (server)
 
 ```bash
+export EFACTURA_SYNC_CONFIG_DIR=/home/youruser/.config/efactura-sync
+export EFACTURA_SYNC_ARCHIVE_DIR=/home/youruser/efactura-archive
 uv run efactura-sync sync run --env prod
 ```
 
-Schedule via cron once daily (example, 03:00 local):
+Schedule via cron once daily (example, 03:00 local). cron runs with a bare
+environment, so set the required variables in the crontab:
 
 ```cron
+EFACTURA_SYNC_CONFIG_DIR=/home/youruser/.config/efactura-sync
+EFACTURA_SYNC_ARCHIVE_DIR=/home/youruser/efactura-archive
 0 3 * * * /usr/bin/env -S /home/youruser/.local/bin/uv run --project /home/youruser/efactura-sync efactura-sync sync run --env prod
 ```
 
@@ -136,17 +148,16 @@ uv run efactura-sync replay <msg_id> --cui 12345678 --env prod
 ## Storage layout
 
 ```
-~/.local/share/efactura-sync/
-  state.db                          # SQLite — dedup ledger + resume log
-  archive/<CUI>/<YYYY>/<MM>/
-    received/archive/<msg_id>.zip   # PRIMITA — original signed ZIP
-    received/pdf/<msg_id>.pdf       # PRIMITA — rendered PDF
-    sent/archive/<msg_id>.zip       # TRIMISA
+$EFACTURA_SYNC_CONFIG_DIR/state.db    # SQLite — dedup ledger + resume log
+$EFACTURA_SYNC_ARCHIVE_DIR/<CUI>/<YYYY>/<MM>/
+    received/archive/<msg_id>.zip     # PRIMITA — original signed ZIP
+    received/pdf/<msg_id>.pdf         # PRIMITA — rendered PDF
+    sent/archive/<msg_id>.zip         # TRIMISA
     sent/pdf/<msg_id>.pdf
-  archive/<CUI>/messages/<YYYY>/<MM>/<msg_id>.zip   # ERORI / MESAJ
+$EFACTURA_SYNC_ARCHIVE_DIR/<CUI>/messages/<YYYY>/<MM>/<msg_id>.zip   # ERORI / MESAJ
 ```
 
-Path partitioning uses the **invoice issue date** (Bucharest local) for invoices and the ANAF `data_creare` for messages. Override the archive root via `[archive].root` in `config.toml`.
+Path partitioning uses the **invoice issue date** (Bucharest local) for invoices and the ANAF `data_creare` for messages. The archive root is `$EFACTURA_SYNC_ARCHIVE_DIR`.
 
 ## Status
 

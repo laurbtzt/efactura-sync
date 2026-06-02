@@ -160,9 +160,7 @@ def test_build_authorize_url_contains_required_params() -> None:
 
     from efactura_sync.anaf.oauth import build_authorize_url
 
-    url, state = build_authorize_url(
-        client_id="cid", redirect_uri="https://example.com/cb"
-    )
+    url, state = build_authorize_url(client_id="cid", redirect_uri="https://example.com/cb")
     assert state  # non-empty CSRF token
     q = up.parse_qs(up.urlparse(url).query)
     assert q["response_type"] == ["code"]

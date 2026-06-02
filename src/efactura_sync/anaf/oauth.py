@@ -121,6 +121,75 @@ def build_authorize_url(*, client_id: str, redirect_uri: str) -> tuple[str, str]
     return url, state
 
 
+def _extract_code_state(redirect_response: str) -> tuple[str, str | None, bool]:
+    """Parse a pasted redirect into ``(code, state, is_url)``.
+
+    A full URL (or any string with a query) yields ``is_url=True`` and the
+    ``state`` ANAF echoed (or ``None`` if absent). A bare code yields
+    ``is_url=False`` and ``state=None`` — there is no state to verify.
+    """
+    s = redirect_response.strip()
+    is_url = "?" in s or s.lower().startswith("http")
+    if is_url:
+        parsed = urllib.parse.urlparse(s)
+        params = urllib.parse.parse_qs(parsed.query)
+        code = params.get("code", [""])[0]
+        state_values = params.get("state")
+        state = state_values[0] if state_values else None
+        return code, state, True
+    return s, None, False
+
+
+def exchange_code(
+    *,
+    http: httpx.Client,
+    env: Env,
+    client_id: str,
+    client_secret: str,
+    cui: str,
+    redirect_uri: str,
+    redirect_response: str,
+    expected_state: str,
+    now: datetime,
+) -> Token:
+    """Exchange a pasted authorization code for a token.
+
+    ``redirect_response`` is either the full URL ANAF redirected to (read from
+    the browser address bar) or a bare code. When a URL is pasted, the echoed
+    ``state`` MUST equal ``expected_state`` (strict CSRF check).
+    """
+    code, state, is_url = _extract_code_state(redirect_response)
+    if not code:
+        raise AuthError("no authorization code found in pasted redirect")
+    if is_url and state != expected_state:
+        raise AuthError("state mismatch on ANAF redirect")
+    resp = http.post(
+        _TOKEN_URL,
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "token_content_type": "jwt",
+        },
+        auth=(client_id, client_secret),
+        headers={"User-Agent": USER_AGENT},
+        timeout=30.0,
+    )
+    if resp.status_code != 200:
+        snippet = resp.content[:200].decode("utf-8", "replace")
+        raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {snippet}")
+    body = resp.json()
+    expires_in = int(body.get("expires_in", 0))
+    return Token(
+        cui=cui,
+        env=env,
+        access_token=body["access_token"],
+        refresh_token=body["refresh_token"],
+        expires_at=now + timedelta(seconds=expires_in),
+        obtained_at=now,
+    )
+
+
 def refresh_access_token(
     *,
     http: httpx.Client,

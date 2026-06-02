@@ -2,63 +2,13 @@
 
 Daily archival sync for Romanian ANAF e-Factura SPV. Read-only — pulls invoices and messages, never uploads. Files are archived locally; PDF rendering goes through ANAF's hosted `xmltopdf` service. Notifications go out as Romanian-language emails over SMTP.
 
-See the design spec at [`docs/superpowers/specs/2026-05-04-efactura-sync-design.md`](docs/superpowers/specs/2026-05-04-efactura-sync-design.md) and the implementation plan at [`docs/superpowers/plans/2026-05-04-efactura-sync.md`](docs/superpowers/plans/2026-05-04-efactura-sync.md).
+See the design spec at [`docs/superpowers/specs/2026-05-04-efactura-sync-design.md`](docs/superpowers/specs/2026-05-04-efactura-sync-design.md) and the implementation plan at [`docs/superpowers/plans/2026-05-04-efactura-sync.md`](docs/superpowers/plans/2026-05-04-efactura-sync.md). Path configuration is covered by [`docs/superpowers/specs/2026-06-02-env-driven-paths-design.md`](docs/superpowers/specs/2026-06-02-env-driven-paths-design.md).
 
 ## Setup
 
 Prerequisites: Python 3.14+, [`uv`](https://docs.astral.sh/uv/), and a registered ANAF OAuth application (see `docs/Oauth_procedura_inregistrare_aplicatii_portal_ANAF.pdf`).
 
-```bash
-uv sync --dev
-```
-
-Create config files:
-
-```bash
-mkdir -p ~/.config/efactura-sync/tokens
-chmod 700 ~/.config/efactura-sync ~/.config/efactura-sync/tokens
-```
-
-`~/.config/efactura-sync/config.toml`:
-
-```toml
-[smtp]
-host = "smtp.fastmail.com"
-port = 465
-tls = "implicit"
-from_addr = "efactura@yourdomain.tld"
-to_addr = "you@yourdomain.tld"
-
-[anaf]
-default_env = "prod"
-
-[logging]
-level = "INFO"
-```
-
-> The `[smtp]` section is validated at startup and used at runtime: per-message notifications go to `to_addr`, run-failure notifications to `error_to_addr` (defaults to `to_addr` if omitted).
-
-`~/.config/efactura-sync/secrets.toml` (chmod 0600):
-
-```toml
-[smtp]
-username = "efactura@yourdomain.tld"
-password = "your-app-password"
-
-[anaf.prod]
-client_id = "from-anaf-portal"
-client_secret = "from-anaf-portal"
-
-[anaf.test]
-client_id = "from-anaf-portal-test"
-client_secret = "from-anaf-portal-test"
-```
-
-```bash
-chmod 600 ~/.config/efactura-sync/secrets.toml
-```
-
-## Configuration paths
+### Configuration paths
 
 All paths come from environment variables — there is no XDG, `$HOME`, or
 config-file fallback. The two base variables are **required**; every command
@@ -86,6 +36,58 @@ A missing required variable fails fast:
 ```
 $ efactura-sync sync run
 error: EFACTURA_SYNC_CONFIG_DIR is not set
+```
+
+### Install
+
+```bash
+uv sync --dev
+```
+
+### Create config files
+
+```bash
+mkdir -p "$EFACTURA_SYNC_CONFIG_DIR/tokens"
+chmod 700 "$EFACTURA_SYNC_CONFIG_DIR" "$EFACTURA_SYNC_CONFIG_DIR/tokens"
+```
+
+`$EFACTURA_SYNC_CONFIG_DIR/config.toml`:
+
+```toml
+[smtp]
+host = "smtp.fastmail.com"
+port = 465
+tls = "implicit"
+from_addr = "efactura@yourdomain.tld"
+to_addr = "you@yourdomain.tld"
+
+[anaf]
+default_env = "prod"
+
+[logging]
+level = "INFO"
+```
+
+> The `[smtp]` section is validated at startup and used at runtime: per-message notifications go to `to_addr`, run-failure notifications to `error_to_addr` (defaults to `to_addr` if omitted).
+
+`$EFACTURA_SYNC_CONFIG_DIR/secrets.toml` (chmod 0600):
+
+```toml
+[smtp]
+username = "efactura@yourdomain.tld"
+password = "your-app-password"
+
+[anaf.prod]
+client_id = "from-anaf-portal"
+client_secret = "from-anaf-portal"
+
+[anaf.test]
+client_id = "from-anaf-portal-test"
+client_secret = "from-anaf-portal-test"
+```
+
+```bash
+chmod 600 "$EFACTURA_SYNC_CONFIG_DIR/secrets.toml"
 ```
 
 ## Onboard a CUI
@@ -157,7 +159,7 @@ $EFACTURA_SYNC_ARCHIVE_DIR/<CUI>/<YYYY>/<MM>/
 $EFACTURA_SYNC_ARCHIVE_DIR/<CUI>/messages/<YYYY>/<MM>/<msg_id>.zip   # ERORI / MESAJ
 ```
 
-Path partitioning uses the **invoice issue date** (Bucharest local) for invoices and the ANAF `data_creare` for messages. The archive root is `$EFACTURA_SYNC_ARCHIVE_DIR`.
+Path partitioning uses the **invoice issue date** (Bucharest local) for invoices and the ANAF `data_creare` for messages. The archive root is `$EFACTURA_SYNC_ARCHIVE_DIR`. `state.db` defaults to `$EFACTURA_SYNC_CONFIG_DIR/state.db`; set `EFACTURA_SYNC_DB` to relocate it.
 
 ## Status
 

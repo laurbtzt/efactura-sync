@@ -73,6 +73,14 @@ _OPT_CUI_FILTER = typer.Option(
 _OPT_DRY_RUN = typer.Option(
     False, "--dry-run", help="Walk the pipeline but do not write or call ANAF."
 )
+_OPT_ZILE = typer.Option(
+    None,
+    "--zile",
+    min=1,
+    max=60,
+    help="Override the lookback window in days (1-60). "
+    "Default: 60 on first run, else days since last poll.",
+)
 _REPLAY_MSG_ID_ARG = typer.Argument(..., help="ANAF message id to replay.")
 
 
@@ -298,6 +306,7 @@ def sync_run_cmd(
     cui: str | None = _OPT_CUI_FILTER,
     env: str = _OPT_ENV,
     dry_run: bool = _OPT_DRY_RUN,
+    zile: int | None = _OPT_ZILE,
 ) -> None:
     """Run the daily sync for one or all monitored CUIs."""
     cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
@@ -322,7 +331,8 @@ def sync_run_cmd(
 
         if dry_run:
             for m in monitored:
-                typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}")
+                suffix = f" zile={zile}" if zile is not None else ""
+                typer.echo(f"[dry-run] would sync cui={m.cui} env={env_typed}{suffix}")
             return
 
         archive_root = cli_ctx.archive_dir
@@ -372,6 +382,7 @@ def sync_run_cmd(
                         env=env_typed,
                         access_token=tok.access_token,
                         now=now,
+                        zile_override=zile,
                     )
                     typer.echo(
                         f"cui={m.cui} env={env_typed} "

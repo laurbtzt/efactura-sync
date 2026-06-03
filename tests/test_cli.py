@@ -333,19 +333,20 @@ def test_sync_run_invokes_run_for_cui_for_each_monitored_cui(
         ),
     )
 
-    calls: list[str] = []
+    calls: list[dict[str, object]] = []
 
     def fake_run(deps: object, **kwargs: object) -> object:
-        calls.append(str(kwargs["my_cui"]))
+        calls.append(kwargs)
         from efactura_sync.sync import RunResult
 
         return RunResult(processed=0, failures=0)
 
     monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
 
-    result = runner.invoke(app, ["sync", "run", "--env", "prod"])
+    result = runner.invoke(app, ["sync", "run", "--env", "prod", "--zile", "30"])
     assert result.exit_code == 0, result.stdout
-    assert calls == ["12345678"]
+    assert [c["my_cui"] for c in calls] == ["12345678"]
+    assert calls[0]["zile_override"] == 30
     # Output mentions the cui and counts.
     assert "12345678" in result.stdout
     assert "processed=0" in result.stdout
@@ -693,3 +694,51 @@ def test_auth_login_browser_flag_opens(
     )
     assert result.exit_code == 0, result.stdout
     assert browser_calls == ["https://authorize?x=1"]
+
+
+def test_sync_run_without_zile_passes_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    runner.invoke(app, ["cui", "add", "12345678"])
+    save_token(
+        tmp_path / "tokens",
+        Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+    calls: list[dict[str, object]] = []
+
+    def fake_run(deps: object, **kwargs: object) -> object:
+        calls.append(kwargs)
+        from efactura_sync.sync import RunResult
+
+        return RunResult(processed=0, failures=0)
+
+    monkeypatch.setattr("efactura_sync.cli.run_for_cui", fake_run)
+    result = runner.invoke(app, ["sync", "run", "--env", "prod"])
+    assert result.exit_code == 0, result.stdout
+    assert calls[0]["zile_override"] is None
+
+
+def test_sync_run_zile_out_of_range_exits_two(tmp_path: Path) -> None:
+    runner.invoke(app, ["cui", "add", "12345678"])
+    too_big = runner.invoke(app, ["sync", "run", "--env", "prod", "--zile", "100"])
+    assert too_big.exit_code == 2
+    too_small = runner.invoke(app, ["sync", "run", "--env", "prod", "--zile", "0"])
+    assert too_small.exit_code == 2
+
+
+def test_sync_run_dry_run_shows_zile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    runner.invoke(app, ["cui", "add", "12345678"])
+    result = runner.invoke(
+        app,
+        ["sync", "run", "--env", "prod", "--dry-run", "--zile", "60"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "[dry-run]" in result.stdout
+    assert "zile=60" in result.stdout

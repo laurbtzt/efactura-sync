@@ -145,7 +145,11 @@ EFACTURA_SYNC_ARCHIVE_DIR=/home/youruser/efactura-archive
 ```
 
 What `sync run` does:
-- Lists new ANAF messages per monitored CUI (clamped to 60 days, with a 1-day safety overlap).
+- Lists new ANAF messages per monitored CUI. The first run for a CUI backfills
+  up to 60 days (ANAF's maximum); later runs cover the time since the last poll
+  plus a 1-day safety overlap, clamped to 60 days. Pass `--zile N` (1-60) to
+  force a specific window, e.g. a one-off backfill:
+  `efactura-sync sync run --cui 12345678 --env prod --zile 60`.
 - Downloads each new message's signed ZIP and writes it atomically into the archive tree.
 - For PRIMITA / TRIMISA invoices, extracts the UBL XML, renders a PDF via ANAF's `xmltopdf` endpoint, and writes it next to the ZIP.
 - Records every message in SQLite (`state.db`) with deduplication on `(msg_id, cui, env)`.

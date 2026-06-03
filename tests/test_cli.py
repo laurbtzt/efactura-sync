@@ -86,7 +86,11 @@ def test_auth_login_invokes_oauth_and_writes_token(
 
     monkeypatch.setattr("efactura_sync.cli.build_authorize_url", fake_build)
     monkeypatch.setattr("efactura_sync.cli.exchange_code", fake_exchange)
-    monkeypatch.setattr("efactura_sync.cli.webbrowser.open", lambda _url: True)
+    browser_calls: list[str] = []
+    monkeypatch.setattr(
+        "efactura_sync.cli.webbrowser.open",
+        lambda url: browser_calls.append(url) or True,
+    )
 
     result = runner.invoke(
         app,
@@ -100,6 +104,7 @@ def test_auth_login_invokes_oauth_and_writes_token(
     assert exchange_kwargs["redirect_uri"] == "https://example.com/cb"  # type: ignore[index]
     token_file = tmp_path / "tokens" / "12345678.prod.json"
     assert token_file.exists()
+    assert browser_calls == []  # default does not open a browser
 
 
 def test_invalid_env_exits_two(tmp_path: Path) -> None:
@@ -617,3 +622,74 @@ def test_missing_config_dir_env_exits_two(tmp_path: Path, monkeypatch: pytest.Mo
     assert result.exit_code == 2
     combined = (result.stdout or "") + (result.stderr or "")
     assert "EFACTURA_SYNC_CONFIG_DIR is not set" in combined
+
+
+def test_auth_login_no_browser_does_not_open(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from efactura_sync.anaf.oauth import Token
+
+    browser_calls: list[str] = []
+    monkeypatch.setattr(
+        "efactura_sync.cli.build_authorize_url",
+        lambda **_kw: ("https://authorize?x=1", "S1"),
+    )
+    monkeypatch.setattr(
+        "efactura_sync.cli.webbrowser.open",
+        lambda url: browser_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        "efactura_sync.cli.exchange_code",
+        lambda **kwargs: Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["auth", "login", "--cui", "12345678", "--env", "prod", "--no-browser"],
+        input="https://example.com/cb?code=abc&state=S1\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert browser_calls == []
+    assert "https://authorize?x=1" in result.stdout  # URL is printed for copying
+
+
+def test_auth_login_browser_flag_opens(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from efactura_sync.anaf.oauth import Token
+
+    browser_calls: list[str] = []
+    monkeypatch.setattr(
+        "efactura_sync.cli.build_authorize_url",
+        lambda **_kw: ("https://authorize?x=1", "S1"),
+    )
+    monkeypatch.setattr(
+        "efactura_sync.cli.webbrowser.open",
+        lambda url: browser_calls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        "efactura_sync.cli.exchange_code",
+        lambda **kwargs: Token(
+            cui="12345678",
+            env="prod",
+            access_token="acc",
+            refresh_token="ref",
+            expires_at=datetime(2026, 8, 1, tzinfo=UTC),
+            obtained_at=datetime(2026, 5, 4, tzinfo=UTC),
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        ["auth", "login", "--cui", "12345678", "--env", "prod", "--browser"],
+        input="https://example.com/cb?code=abc&state=S1\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    assert browser_calls == ["https://authorize?x=1"]

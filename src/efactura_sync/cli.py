@@ -53,6 +53,11 @@ app.add_typer(sync_app, name="sync")
 _OPT_CUI_LOGIN = typer.Option(..., "--cui", help="CUI being authorized")
 _OPT_CUI = typer.Option(..., "--cui")
 _OPT_ENV = typer.Option("prod", "--env")
+_OPT_BROWSER = typer.Option(
+    False,
+    "--browser/--no-browser",
+    help="Open the authorize URL in a browser (default: print it for manual paste).",
+)
 
 _CUI_ARG = typer.Argument(..., help="Romanian fiscal identifier (CUI).")
 _NAME_OPT = typer.Option(None, "--name", help="Display name (used in email subjects later).")
@@ -124,6 +129,7 @@ def auth_login(
     ctx: typer.Context,
     cui: str = _OPT_CUI_LOGIN,
     env: str = _OPT_ENV,
+    browser: bool = _OPT_BROWSER,
 ) -> None:
     """Run the OAuth2 authorization-code flow (paste the redirect URL back)."""
     cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
@@ -137,16 +143,13 @@ def auth_login(
         raise typer.Exit(code=2)
 
     url, state = build_authorize_url(client_id=client_id, redirect_uri=redirect_uri)
-    opened = webbrowser.open(url)
-    typer.echo("Open this URL in a browser with your ANAF certificate plugged in:")
-    typer.echo(f"\n  {url}\n")
-    if not opened:
-        typer.echo("(could not open the browser automatically — copy the URL above)")
+    if browser and not webbrowser.open(url):
+        typer.echo("(could not open the browser automatically — copy the URL below)")
     typer.echo(
-        "After certificate auth, your browser is redirected to your callback URL. "
-        "The page need not load — copy the full address-bar URL (it contains "
-        "?code=...) and paste it below."
+        "Open this URL in a browser with your ANAF certificate, then paste the\n"
+        "redirect URL (it contains ?code=...) below:"
     )
+    typer.echo(f"\n  {url}\n")
     pasted = typer.prompt("Paste the redirect URL (or just the code)")
 
     with httpx.Client() as http:

@@ -111,11 +111,12 @@ On the **laptop** (digital cert plugged in):
 
 ```bash
 uv run efactura-sync cui add 12345678 --name "Acme SRL"
+# By default the URL is printed for manual paste (no browser needed — works over SSH):
 uv run efactura-sync auth login --cui 12345678 --env prod
-# A browser opens the ANAF authorize URL; present the cert (PIN).
-# Your browser lands on the callback URL — copy the FULL address-bar URL
-# (it contains ?code=...) and paste it back into the CLI prompt.
-# Then copy the token to the server:
+# On a machine with a browser + certificate, open it automatically:
+uv run efactura-sync auth login --cui 12345678 --env prod --browser
+# Complete cert auth, then paste the FULL redirect URL (it contains ?code=...)
+# back into the CLI prompt. Then copy the token to the server:
 scp "$EFACTURA_SYNC_CONFIG_DIR/tokens/12345678.prod.json" \
     server:"$EFACTURA_SYNC_CONFIG_DIR/tokens/"
 ```

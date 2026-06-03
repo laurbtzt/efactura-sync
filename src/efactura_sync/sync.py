@@ -367,10 +367,14 @@ class RunResult:
     failures: int
 
 
-def _zile_for_run(deps: SyncDeps, *, cui: str, env: Env, now: datetime) -> int:
+def _zile_for_run(
+    deps: SyncDeps, *, cui: str, env: Env, now: datetime, override: int | None = None
+) -> int:
+    if override is not None:
+        return max(1, min(60, override))
     state = dbq.get_poll_state(deps.db, cui=cui, env=env)
     if state is None:
-        return 1
+        return 60  # first run backfills ANAF's maximum window
     delta_days = math.ceil((now - state.last_polled_at).total_seconds() / 86400) + 1
     return max(1, min(60, delta_days))
 
@@ -382,6 +386,7 @@ def run_for_cui(
     env: Env,
     access_token: str,
     now: datetime,
+    zile_override: int | None = None,
 ) -> RunResult:
     """Run a full daily sync for a single CUI.
 
@@ -447,7 +452,7 @@ def run_for_cui(
             )
 
     # New-message poll
-    zile = _zile_for_run(deps, cui=my_cui, env=env, now=now)
+    zile = _zile_for_run(deps, cui=my_cui, env=env, now=now, override=zile_override)
     new_msgs = deps.anaf.list_messages(cif=my_cui, zile=zile, access_token=access_token)
     _log.info("poll: zile=%d new=%d", zile, len(new_msgs))
     for msg in new_msgs:

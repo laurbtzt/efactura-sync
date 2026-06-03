@@ -399,7 +399,7 @@ def test_run_for_cui_polls_and_processes(deps: SyncDeps, now_utc: datetime) -> N
     assert result.processed == 1
     assert result.failures == 0
     [(_, zile)] = deps.anaf.list_calls  # type: ignore[attr-defined]
-    assert zile == 1  # first run, no poll_state yet
+    assert zile == 60  # first run, no poll_state yet -> backfill 60 days
 
 
 def test_run_for_cui_uses_zile_window_from_poll_state(deps: SyncDeps, now_utc: datetime) -> None:
@@ -416,6 +416,41 @@ def test_run_for_cui_uses_zile_window_from_poll_state(deps: SyncDeps, now_utc: d
 
     [(_, zile)] = deps.anaf.list_calls  # type: ignore[attr-defined]
     assert zile == 4  # 3 days + 1 safety overlap
+
+
+def test_run_for_cui_zile_override_forces_window(
+    deps: SyncDeps, now_utc: datetime
+) -> None:
+    # An override forces the window even when poll_state would say otherwise.
+    deps.anaf = FakeAnaf(list_response=[])  # type: ignore[assignment]
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    upsert_poll_state(
+        deps.db,
+        cui="12345678",
+        env="prod",
+        last_polled_at=now_utc - timedelta(days=3),
+    )
+
+    run_for_cui(
+        deps,
+        my_cui="12345678",
+        env="prod",
+        access_token="tok",
+        now=now_utc,
+        zile_override=45,
+    )
+
+    [(_, zile)] = deps.anaf.list_calls  # type: ignore[attr-defined]
+    assert zile == 45  # override wins over the 3-day poll_state delta
+
+
+def test_run_for_cui_zile_override_is_clamped(deps: SyncDeps, now_utc: datetime) -> None:
+    # Defense-in-depth clamp for non-CLI callers (CLI restricts to 1..60).
+    from efactura_sync.sync import _zile_for_run
+
+    add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
+    assert _zile_for_run(deps, cui="12345678", env="prod", now=now_utc, override=100) == 60
+    assert _zile_for_run(deps, cui="12345678", env="prod", now=now_utc, override=0) == 1
 
 
 def test_run_for_cui_resume_pass_finishes_pending_rows(deps: SyncDeps, now_utc: datetime) -> None:

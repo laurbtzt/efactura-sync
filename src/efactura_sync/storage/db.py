@@ -4,11 +4,14 @@ The connection itself is owned by callers (so tests can use ``:memory:``).
 Every public function takes a ``sqlite3.Connection`` as its first argument.
 """
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -84,6 +87,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(_SCHEMA_SQL)
     conn.commit()
+    _log.debug("schema initialized")
 
 
 def _iso(dt: datetime) -> str:
@@ -122,6 +126,7 @@ def add_monitored_cui(
         (cui, display_name, _iso(now)),
     )
     conn.commit()
+    _log.debug("monitored cui added cui=%s name=%s", cui, display_name)
 
 
 def get_monitored_cui_display_name(conn: sqlite3.Connection, *, cui: str) -> str | None:
@@ -147,6 +152,7 @@ def remove_monitored_cui(conn: sqlite3.Connection, *, cui: str) -> None:
     conn.execute("DELETE FROM poll_state WHERE cui = ?", (cui,))
     conn.execute("DELETE FROM monitored_cuis WHERE cui = ?", (cui,))
     conn.commit()
+    _log.debug("monitored cui removed cui=%s", cui)
 
 
 def add_watched_counterparty(
@@ -165,6 +171,7 @@ def add_watched_counterparty(
         (my_cui, counterparty_cui, _iso(now)),
     )
     conn.commit()
+    _log.debug("watch added my_cui=%s counterparty=%s", my_cui, counterparty_cui)
 
 
 def list_watched_counterparties(conn: sqlite3.Connection, *, my_cui: str) -> list[str]:
@@ -198,6 +205,7 @@ def remove_watched_counterparty(
         (my_cui, counterparty_cui),
     )
     conn.commit()
+    _log.debug("watch removed my_cui=%s counterparty=%s", my_cui, counterparty_cui)
 
 
 @dataclass(frozen=True)
@@ -228,6 +236,9 @@ def upsert_poll_state(
         (cui, env, _iso(last_polled_at)),
     )
     conn.commit()
+    _log.debug(
+        "poll_state upsert cui=%s env=%s last_polled_at=%s", cui, env, last_polled_at.isoformat()
+    )
 
 
 @dataclass(frozen=True)
@@ -303,6 +314,7 @@ def insert_synced_message(conn: sqlite3.Connection, msg: SyncedMessage) -> bool:
         ),
     )
     conn.commit()
+    _log.debug("synced_message insert msg_id=%s cui=%s env=%s", msg.msg_id, msg.cui, msg.env)
     return cur.rowcount > 0
 
 
@@ -331,6 +343,7 @@ def update_zip_path(
         (zip_path, _iso(now), msg_id, cui, env),
     )
     conn.commit()
+    _log.debug("zip path set msg_id=%s cui=%s env=%s zip=%s", msg_id, cui, env, zip_path)
 
 
 def finalize_zip_write(
@@ -367,6 +380,7 @@ def finalize_zip_write(
         ),
     )
     conn.commit()
+    _log.debug("zip finalized msg_id=%s cui=%s env=%s zip=%s", msg_id, cui, env, zip_path)
 
 
 def update_pdf_path(
@@ -384,6 +398,7 @@ def update_pdf_path(
         (pdf_path, _iso(now), msg_id, cui, env),
     )
     conn.commit()
+    _log.debug("pdf path set msg_id=%s cui=%s env=%s pdf=%s", msg_id, cui, env, pdf_path)
 
 
 def mark_email_sent(
@@ -395,6 +410,7 @@ def mark_email_sent(
         (_iso(sent_at), _iso(sent_at), msg_id, cui, env),
     )
     conn.commit()
+    _log.debug("email marked sent msg_id=%s cui=%s env=%s", msg_id, cui, env)
 
 
 def mark_email_skipped(
@@ -412,6 +428,7 @@ def mark_email_skipped(
         (reason, _iso(now), msg_id, cui, env),
     )
     conn.commit()
+    _log.debug("email marked skipped msg_id=%s cui=%s env=%s reason=%s", msg_id, cui, env, reason)
 
 
 def update_attempt(
@@ -436,6 +453,7 @@ def update_attempt(
         (_iso(now), error, msg_id, cui, env),
     )
     conn.commit()
+    _log.debug("attempt recorded msg_id=%s cui=%s env=%s error=%s", msg_id, cui, env, error)
 
 
 def find_pending_rows(conn: sqlite3.Connection, *, cui: str, env: str) -> list[SyncedMessage]:

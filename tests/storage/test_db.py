@@ -370,3 +370,15 @@ def test_monitored_cui_added_at_not_null(db) -> None:
             "INSERT INTO monitored_cuis(cui, display_name, added_at) VALUES (?,?,?)",
             ("12345678", "Acme", None),
         )
+
+
+def test_add_monitored_cui_logs_debug(
+    db: sqlite3.Connection, caplog: pytest.LogCaptureFixture
+) -> None:
+    init_schema(db)
+    with caplog.at_level("DEBUG", logger="efactura_sync.storage.db"):
+        add_monitored_cui(db, cui="123", display_name="Acme", now=datetime(2026, 6, 4, tzinfo=UTC))
+
+    assert any(
+        "monitored cui added" in r.message and "123" in r.message for r in caplog.records
+    )

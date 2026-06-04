@@ -627,3 +627,27 @@ def test_email_send_failure_records_error_and_leaves_row_pending(
     assert row2 is not None
     assert row2.email_sent_at is not None
     assert len(deps.mailer.sent) == 1  # type: ignore[attr-defined]
+
+
+def test_process_one_message_logs_steps(
+    deps: SyncDeps, now_utc: datetime, caplog: pytest.LogCaptureFixture
+) -> None:
+    deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
+    add_monitored_cui(deps.db, cui="12345678", display_name="Acme", now=now_utc)
+    add_watched_counterparty(
+        deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc
+    )
+
+    with caplog.at_level("DEBUG", logger="efactura_sync.sync"):
+        process_one_message(
+            deps,
+            my_cui="12345678",
+            my_display_name="Acme",
+            env="prod",
+            access_token="tok",
+            list_msg=_list_msg(),
+            now=now_utc,
+        )
+
+    assert any("email decision" in r.message for r in caplog.records)
+    assert any("downloaded msg_id=3001" in r.message for r in caplog.records)

@@ -168,6 +168,7 @@ def process_one_message(
                 now=now,
             )
             return
+        _log.debug("downloaded msg_id=%s (%d bytes)", list_msg.msg_id, len(zip_bytes))
     else:
         zip_bytes = (deps.archive_root / row.zip_path).read_bytes()
 
@@ -227,6 +228,7 @@ def process_one_message(
             issue_date=(partition_date if list_msg.tip in ("PRIMITA", "TRIMISA") else None),
             now=now,
         )
+        _log.debug("zip written msg_id=%s tip=%s", list_msg.msg_id, list_msg.tip)
         row = dbq.get_synced_message(deps.db, msg_id=list_msg.msg_id, cui=my_cui, env=env)
         if row is None:
             raise RuntimeError(f"row vanished after finalize_zip_write: msg_id={list_msg.msg_id}")
@@ -257,6 +259,7 @@ def process_one_message(
                 pdf_path=rel_pdf,
                 now=now,
             )
+            _log.debug("pdf written msg_id=%s", list_msg.msg_id)
         except RenderError as e:
             dbq.update_attempt(
                 deps.db,
@@ -285,6 +288,7 @@ def process_one_message(
         list_msg=list_msg,
         counterparty_cui=row.counterparty_cui,
     )
+    _log.debug("email decision msg_id=%s skip=%s", list_msg.msg_id, skip_reason)
     if skip_reason is not None:
         dbq.mark_email_skipped(
             deps.db,
@@ -453,6 +457,7 @@ def run_for_cui(
 
     # New-message poll
     zile = _zile_for_run(deps, cui=my_cui, env=env, now=now, override=zile_override)
+    _log.debug("zile resolved cui=%s zile=%d override=%s", my_cui, zile, zile_override)
     new_msgs = deps.anaf.list_messages(cif=my_cui, zile=zile, access_token=access_token)
     _log.info("poll: zile=%d new=%d", zile, len(new_msgs))
     for msg in new_msgs:

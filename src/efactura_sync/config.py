@@ -65,6 +65,23 @@ def _read_toml(path: Path, *, label: str) -> dict[str, Any]:
         raise ConfigError(f"invalid TOML in {label} ({path}): {e}") from e
 
 
+def read_log_level(config_path: Path) -> str:
+    """Read ``[logging].level`` from config.toml; return "INFO" on any problem.
+
+    Used by the CLI to configure logging before full config validation, so the
+    level applies even to commands that do not otherwise load config. Never
+    raises: missing file, malformed TOML, or a missing section all yield "INFO".
+    """
+    try:
+        cfg = _read_toml(config_path, label="config.toml")
+    except ConfigError:
+        return "INFO"
+    log_cfg = cfg.get("logging")
+    if not isinstance(log_cfg, dict):
+        return "INFO"
+    return str(log_cfg.get("level", "INFO"))
+
+
 def load_config(*, config_path: Path, secrets_path: Path) -> Config:
     cfg = _read_toml(config_path, label="config.toml")
     sec = _read_toml(secrets_path, label="secrets.toml")

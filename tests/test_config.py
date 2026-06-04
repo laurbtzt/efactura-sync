@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from efactura_sync.config import Config, load_config
+from efactura_sync.config import Config, load_config, read_log_level
 from efactura_sync.errors import ConfigError
 
 
@@ -365,3 +365,29 @@ def test_load_config_missing_secrets_file(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="secrets.toml"):
         load_config(config_path=cfg_path, secrets_path=tmp_path / "missing-secrets.toml")
+
+
+def test_read_log_level_returns_configured_value(tmp_path: Path) -> None:
+    cfg = _write(
+        tmp_path,
+        "config.toml",
+        """
+        [logging]
+        level = "DEBUG"
+        """,
+    )
+    assert read_log_level(cfg) == "DEBUG"
+
+
+def test_read_log_level_missing_file_defaults_info(tmp_path: Path) -> None:
+    assert read_log_level(tmp_path / "nope.toml") == "INFO"
+
+
+def test_read_log_level_no_logging_section_defaults_info(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, "config.toml", '[smtp]\nhost = "x"\n')
+    assert read_log_level(cfg) == "INFO"
+
+
+def test_read_log_level_malformed_toml_defaults_info(tmp_path: Path) -> None:
+    cfg = _write(tmp_path, "config.toml", "this is = = not toml [[[")
+    assert read_log_level(cfg) == "INFO"

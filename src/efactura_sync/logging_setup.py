@@ -28,9 +28,9 @@ def setup_logging(level: str) -> None:
     in this standalone CLI, so each record is still emitted exactly once.
     """
     logger = logging.getLogger(_PACKAGE_LOGGER)
-    numeric = logging.getLevelName(level.upper())
+    numeric = logging.getLevelNamesMapping().get(level.upper())
     bad: str | None = None
-    if not isinstance(numeric, int):
+    if numeric is None:
         numeric = logging.INFO
         bad = level
 

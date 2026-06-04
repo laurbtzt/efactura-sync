@@ -5,6 +5,7 @@ This module is split in two layers:
   * The :class:`Mailer` class owns the SMTP connection and side-effects.
 """
 
+import logging
 import smtplib
 from dataclasses import dataclass, field
 from datetime import date
@@ -13,6 +14,8 @@ from typing import Literal
 
 from efactura_sync.anaf.messages import InvoiceFields, ListMessage
 from efactura_sync.types import Env
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -227,8 +230,10 @@ class Mailer:
                 filename=filename,
             )
 
+        _log.debug("smtp connect host=%s port=%d tls=%s", self._host, self._port, self._tls)
         with self._connect() as smtp:
             if self._tls == "starttls":
                 smtp.starttls()
             smtp.login(self._username, self._password)
             smtp.sendmail(self._from, [to_addr], std.as_bytes())
+        _log.info("email sent subject=%r to=%s", msg.subject, to_addr)

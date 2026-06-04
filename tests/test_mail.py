@@ -224,3 +224,27 @@ def test_mailer_starttls(monkeypatch: pytest.MonkeyPatch) -> None:
     [smtp] = _RecordingSMTP.instances
     assert smtp.port == 587
     assert smtp.starttls_called is True
+
+
+def test_send_logs_success(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _RecordingSMTP.instances.clear()
+    monkeypatch.setattr("smtplib.SMTP_SSL", _RecordingSMTP)
+
+    mailer = Mailer(
+        host="smtp.example.com",
+        port=465,
+        tls="implicit",
+        username="u",
+        password="hunter2secret",
+        from_addr="from@example.com",
+    )
+    with caplog.at_level("INFO", logger="efactura_sync.mail"):
+        mailer.send(
+            EmailMessage(subject="Test", body="hi", message_id="<1@efactura-sync>", attachments=[]),
+            to_addr="to@example.com",
+        )
+
+    assert any("email sent" in r.message for r in caplog.records)
+    assert "hunter2secret" not in caplog.text

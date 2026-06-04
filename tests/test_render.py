@@ -55,3 +55,14 @@ def test_render_uses_test_env_url() -> None:
     renderer.render(ubl_xml=b"<Invoice/>")
 
     assert "/test/FCTEL/rest/transformare/" in str(captured["url"])
+
+
+def test_render_logs_success(caplog: pytest.LogCaptureFixture) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"%PDF-1.7 fake")
+
+    renderer = PdfRenderer(http=httpx.Client(transport=httpx.MockTransport(handler)))
+    with caplog.at_level("INFO", logger="efactura_sync.render"):
+        renderer.render(ubl_xml=b"<Invoice/>")
+
+    assert any("rendered PDF" in r.message for r in caplog.records)

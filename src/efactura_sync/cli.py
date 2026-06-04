@@ -1,5 +1,6 @@
 """Typer CLI."""
 
+import logging
 import socket
 import sqlite3
 import traceback
@@ -19,8 +20,9 @@ from efactura_sync.anaf.oauth import (
     refresh_access_token,
     save_token,
 )
-from efactura_sync.config import Config, load_config
+from efactura_sync.config import Config, load_config, read_log_level
 from efactura_sync.errors import AuthError
+from efactura_sync.logging_setup import setup_logging
 from efactura_sync.mail import Mailer, render_failure_email
 from efactura_sync.paths import PathConfigError, Paths, resolve_paths
 from efactura_sync.render import PdfRenderer
@@ -49,6 +51,8 @@ sync_app = typer.Typer(no_args_is_help=True, help="Run the daily sync.")
 app.add_typer(cui_app, name="cui")
 app.add_typer(watch_app, name="watch")
 app.add_typer(sync_app, name="sync")
+
+_log = logging.getLogger(__name__)
 
 _OPT_CUI_LOGIN = typer.Option(..., "--cui", help="CUI being authorized")
 _OPT_CUI = typer.Option(..., "--cui")
@@ -91,6 +95,7 @@ def _main(ctx: typer.Context) -> None:
     except PathConfigError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+    setup_logging(read_log_level(ctx.obj.config_path))
 
 
 def _validate_env(env: str) -> Env:
@@ -113,6 +118,7 @@ def _open_db(ctx: typer.Context) -> sqlite3.Connection:
     cli_ctx.db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = _db_connect(cli_ctx.db_path)
     init_schema(conn)
+    _log.debug("db opened path=%s", cli_ctx.db_path)
     return conn
 
 
@@ -140,6 +146,7 @@ def auth_login(
     browser: bool = _OPT_BROWSER,
 ) -> None:
     """Run the OAuth2 authorization-code flow (paste the redirect URL back)."""
+    _log.debug("auth login cui=%s env=%s browser=%s", cui, env, browser)
     cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
     redirect_uri = cfg.anaf_redirect_uri(env_typed)
     if not redirect_uri:
@@ -183,6 +190,7 @@ def auth_refresh(
     env: str = _OPT_ENV,
 ) -> None:
     """Refresh access token using the stored refresh token (no cert required)."""
+    _log.debug("auth refresh cui=%s env=%s", cui, env)
     cli_ctx, _, env_typed, client_id, client_secret, now = _prepare(ctx, env)
     tok = load_token(cli_ctx.tokens_dir, cui=cui, env=env)
     with httpx.Client() as http:
@@ -209,6 +217,7 @@ def cui_add_cmd(
     name: str | None = _NAME_OPT,
 ) -> None:
     """Register a new monitored CUI (idempotent UPSERT — re-adding updates the display name)."""
+    _log.debug("cui add cui=%s name=%s", cui, name)
     conn = _open_db(ctx)
     try:
         add_monitored_cui(conn, cui=cui, display_name=name, now=datetime.now(UTC))
@@ -220,6 +229,7 @@ def cui_add_cmd(
 @cui_app.command("list")
 def cui_list_cmd(ctx: typer.Context) -> None:
     """List all monitored CUIs."""
+    _log.debug("cui list")
     conn = _open_db(ctx)
     try:
         rows = list_monitored_cuis(conn)
@@ -236,6 +246,7 @@ def cui_list_cmd(ctx: typer.Context) -> None:
 @cui_app.command("remove")
 def cui_remove_cmd(ctx: typer.Context, cui: str = _CUI_ARG) -> None:
     """Remove a monitored CUI and all its rows (poll_state, synced_messages, watched)."""
+    _log.debug("cui remove cui=%s", cui)
     conn = _open_db(ctx)
     try:
         remove_monitored_cui(conn, cui=cui)
@@ -254,6 +265,7 @@ def watch_add_cmd(
     cui: str = _WATCH_CUI_OPT,
 ) -> None:
     """Add a counterparty to the PRIMITA email watchlist for one monitored CUI."""
+    _log.debug("watch add counterparty=%s cui=%s", counterparty_cui, cui)
     conn = _open_db(ctx)
     try:
         add_watched_counterparty(
@@ -270,6 +282,7 @@ def watch_add_cmd(
 @watch_app.command("list")
 def watch_list_cmd(ctx: typer.Context, cui: str = _WATCH_CUI_OPT) -> None:
     """List watched counterparties for one monitored CUI."""
+    _log.debug("watch list cui=%s", cui)
     conn = _open_db(ctx)
     try:
         rows = list_watched_counterparties(conn, my_cui=cui)
@@ -289,6 +302,7 @@ def watch_remove_cmd(
     cui: str = _WATCH_CUI_OPT,
 ) -> None:
     """Remove a counterparty from the PRIMITA email watchlist."""
+    _log.debug("watch remove counterparty=%s cui=%s", counterparty_cui, cui)
     conn = _open_db(ctx)
     try:
         remove_watched_counterparty(conn, my_cui=cui, counterparty_cui=counterparty_cui)
@@ -309,6 +323,7 @@ def sync_run_cmd(
     zile: int | None = _OPT_ZILE,
 ) -> None:
     """Run the daily sync for one or all monitored CUIs."""
+    _log.debug("sync run cui=%s env=%s dry_run=%s zile=%s", cui, env, dry_run, zile)
     cli_ctx, cfg, env_typed, client_id, client_secret, now = _prepare(ctx, env)
 
     conn = _open_db(ctx)
@@ -356,6 +371,7 @@ def sync_run_cmd(
                     step = "auth"
                     tok = load_token(cli_ctx.tokens_dir, cui=m.cui, env=env)
                     if needs_refresh(tok, now=now):
+                        _log.info("token refresh cui=%s env=%s", m.cui, env_typed)
                         tok = refresh_access_token(
                             http=http,
                             env=env_typed,
@@ -428,6 +444,7 @@ def status_cmd(
     env: str = _OPT_ENV,
 ) -> None:
     """Show monitored CUIs, token expiry, last poll, pending counts."""
+    _log.debug("status env=%s", env)
     env_typed = _validate_env(env)
     cli_ctx = _ctx(ctx)
     now = datetime.now(UTC)
@@ -469,6 +486,7 @@ def replay_cmd(
 
     This does NOT trigger the run itself — invoke ``sync run`` afterwards.
     """
+    _log.debug("replay msg_id=%s cui=%s env=%s", msg_id, cui, env)
     env_typed = _validate_env(env)
     conn = _open_db(ctx)
     try:

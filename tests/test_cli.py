@@ -742,3 +742,19 @@ def test_sync_run_dry_run_shows_zile(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert result.exit_code == 0, result.stdout
     assert "[dry-run]" in result.stdout
     assert "zile=60" in result.stdout
+
+
+def test_callback_configures_package_logger() -> None:
+    import logging
+
+    import efactura_sync.logging_setup as ls
+
+    pkg = logging.getLogger("efactura_sync")
+    for h in list(pkg.handlers):
+        pkg.removeHandler(h)
+    ls._configured = False
+
+    result = runner.invoke(app, ["cui", "list"])
+    assert result.exit_code == 0
+    assert len(pkg.handlers) == 1
+    assert pkg.propagate is True

@@ -1,6 +1,7 @@
 """HTTP wrapper for the read-side ANAF e-Factura endpoints."""
 
 import json
+import logging
 
 import httpx
 
@@ -13,6 +14,8 @@ _BASE_URLS: dict[Env, str] = {
     "prod": "https://api.anaf.ro/prod/FCTEL/rest",
     "test": "https://api.anaf.ro/test/FCTEL/rest",
 }
+
+_log = logging.getLogger(__name__)
 
 
 # TODO(retry-loop): honor Retry-After when implementing the §7.5 retry schedule
@@ -54,11 +57,15 @@ class AnafClient:
 
     def list_messages(self, *, cif: str, zile: int, access_token: str) -> list[ListMessage]:
         zile_clamped = max(1, min(60, zile))
+        _log.debug("GET listaMesajeFactura cif=%s zile=%d", cif, zile_clamped)
         resp = self._http.get(
             f"{self._base}/listaMesajeFactura",
             params={"cif": cif, "zile": zile_clamped},
             headers=self._headers(access_token),
             timeout=30.0,
+        )
+        _log.debug(
+            "listaMesajeFactura -> HTTP %d (%d bytes)", resp.status_code, len(resp.content)
         )
         _classify(resp)
         try:
@@ -75,9 +82,12 @@ class AnafClient:
                 status=resp.status_code,
                 body=resp.content,
             )
-        return parse_list_response(payload)
+        messages = parse_list_response(payload)
+        _log.info("list_messages cif=%s zile=%d -> %d messages", cif, zile_clamped, len(messages))
+        return messages
 
     def download(self, *, msg_id: str, access_token: str) -> bytes:
+        _log.debug("GET descarcare id=%s", msg_id)
         resp = self._http.get(
             f"{self._base}/descarcare",
             params={"id": msg_id},
@@ -85,4 +95,5 @@ class AnafClient:
             timeout=60.0,
         )
         _classify(resp)
+        _log.info("download msg_id=%s -> %d bytes", msg_id, len(resp.content))
         return resp.content

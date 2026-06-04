@@ -75,3 +75,28 @@ def test_list_messages_rejects_non_dict_payload() -> None:
     client = _client(httpx.MockTransport(handler))
     with pytest.raises(PermanentError, match="non-dict payload"):
         client.list_messages(cif="12345678", zile=1, access_token="tok")
+
+
+def test_list_messages_logs_summary(caplog: pytest.LogCaptureFixture) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"mesaje": []})
+
+    client = _client(httpx.MockTransport(handler))
+    with caplog.at_level("INFO", logger="efactura_sync.anaf.client"):
+        client.list_messages(cif="123", zile=7, access_token="tok")
+
+    assert any("list_messages" in r.message and "cif=123" in r.message for r in caplog.records)
+    # the access token must never be logged
+    assert "tok" not in caplog.text
+
+
+def test_download_logs_summary(caplog: pytest.LogCaptureFixture) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"PKzipbytes")
+
+    client = _client(httpx.MockTransport(handler))
+    with caplog.at_level("INFO", logger="efactura_sync.anaf.client"):
+        client.download(msg_id="m1", access_token="tok")
+
+    assert any("download" in r.message and "msg_id=m1" in r.message for r in caplog.records)
+    assert "tok" not in caplog.text

@@ -104,9 +104,14 @@ def setup_logging(level: str) -> None:
 
 - Scoped to the `efactura_sync` logger (not the root logger) so we never emit
   httpx/smtplib internals.
-- `propagate = False` prevents double-logging through the root logger.
-- The module-level `_configured` guard makes repeated calls (callback +, in
-  approach B, `_prepare`; here only the callback) safe — no duplicate handlers.
+- Propagation is left at its **default (enabled)**. The handler lives only on
+  the package logger and the root logger has no handlers in this standalone CLI,
+  so each record is emitted exactly once — no double-logging. (An earlier draft
+  set `propagate = False`; that was dropped because it blinds pytest's
+  root-based `caplog` to our records, breaking the log-assertion tests, while
+  buying no benefit for an app that fully owns its logging config.)
+- The module-level `_configured` guard makes repeated calls safe — no duplicate
+  handlers.
 - Output goes to **stderr**, leaving stdout for `typer.echo` CLI output.
 
 Example line:

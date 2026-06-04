@@ -1,9 +1,12 @@
 """Atomic file writes and stale `.partial` sweep."""
 
+import logging
 import os
 import time
 from datetime import timedelta
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 class FileStore:
@@ -19,6 +22,7 @@ class FileStore:
         finally:
             os.close(fd)
         os.replace(partial, target)
+        _log.debug("atomic_write %s (%d bytes)", target, len(data))
         # fsync the parent directory so the rename itself is durable on
         # power loss — without this, the file contents survive but the
         # directory entry can be lost. Best-effort: some filesystems
@@ -41,4 +45,6 @@ class FileStore:
             if partial.is_file() and partial.stat().st_mtime < cutoff:
                 partial.unlink()
                 removed.append(partial)
+        if removed:
+            _log.debug("swept %d stale .partial file(s)", len(removed))
         return removed

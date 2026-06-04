@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from efactura_sync.storage.files import FileStore
 
 
@@ -46,3 +48,12 @@ def test_sweep_partials_handles_missing_dir(tmp_path: Path) -> None:
     store = FileStore()
     removed = store.sweep_partials(tmp_path / "does-not-exist", older_than=timedelta(hours=1))
     assert removed == []
+
+
+def test_atomic_write_logs_debug(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    target = tmp_path / "sub" / "x.bin"
+    with caplog.at_level("DEBUG", logger="efactura_sync.storage.files"):
+        FileStore().atomic_write(target, b"hello")
+
+    assert target.read_bytes() == b"hello"
+    assert any("atomic_write" in r.message for r in caplog.records)

@@ -78,6 +78,8 @@ level = "INFO"
 
 > `redirect_uri` must exactly match the HTTPS Callback URL registered in your ANAF OAuth profile. It needs no running server — see "Onboard a CUI".
 
+> `[logging].level` sets verbosity (`INFO` or `DEBUG`); it applies to every command and falls back to `INFO` if the section is missing. Logs go to **stderr** (stdout carries normal command output, so piping is unaffected). `INFO` shows run milestones and external calls (ANAF, SMTP); `DEBUG` adds per-message steps, HTTP details, and DB/file operations. Tokens, secrets, and passwords are never logged.
+
 `$EFACTURA_SYNC_CONFIG_DIR/secrets.toml` (chmod 0600):
 
 ```toml

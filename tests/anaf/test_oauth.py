@@ -311,3 +311,32 @@ def test_exchange_code_missing_refresh_token_raises_auth_error() -> None:
             expected_state="S1",
             now=datetime(2026, 5, 4, tzinfo=UTC),
         )
+
+
+def test_refresh_logs_metadata_not_token(caplog: pytest.LogCaptureFixture) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"access_token": "SECRET_AT", "refresh_token": "SECRET_RT", "expires_in": 3600},
+        )
+
+    now = datetime(2026, 6, 4, tzinfo=UTC)
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as http,
+        caplog.at_level("DEBUG", logger="efactura_sync.anaf.oauth"),
+    ):
+        refresh_access_token(
+            http=http,
+            env="test",
+            client_id="id",
+            client_secret="sec",
+            cui="123",
+            refresh_token="OLD_RT",
+            now=now,
+        )
+
+    assert any("oauth refresh ok" in r.message and "cui=123" in r.message for r in caplog.records)
+    assert "SECRET_AT" not in caplog.text
+    assert "SECRET_RT" not in caplog.text
+    assert "OLD_RT" not in caplog.text
+    assert "sec" not in caplog.text

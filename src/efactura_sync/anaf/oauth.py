@@ -7,6 +7,7 @@ code can be exchanged. Refresh and load/save are usable on the headless server.
 """
 
 import json
+import logging
 import os
 import secrets as _secrets
 import urllib.parse
@@ -22,6 +23,8 @@ from efactura_sync.types import Env
 
 _TOKEN_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/token"
 _AUTHORIZE_URL = "https://logincert.anaf.ro/anaf-oauth2/v1/authorize"
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,7 @@ def save_token(tokens_dir: Path, token: Token) -> None:
     finally:
         os.close(fd)
     os.replace(partial, p)
+    _log.debug("token saved cui=%s env=%s", token.cui, token.env)
     # fsync the parent directory so the rename is durable on power loss.
     try:
         dir_fd = os.open(p.parent, os.O_DIRECTORY)
@@ -81,6 +85,7 @@ def load_token(tokens_dir: Path, *, cui: str, env: str) -> Token:
         env_value = raw["env"]
         if env_value not in ("prod", "test"):
             raise AuthError(f"invalid env in token file: {env_value!r}")
+        _log.debug("token loaded cui=%s env=%s", cui, env)
         return Token(
             cui=raw["cui"],
             env=env_value,
@@ -210,7 +215,11 @@ def exchange_code(
     if resp.status_code != 200:
         snippet = resp.content[:200].decode("utf-8", "replace")
         raise AuthError(f"token exchange failed (HTTP {resp.status_code}): {snippet}")
-    return _token_from_body(resp.json(), cui=cui, env=env, now=now)
+    token = _token_from_body(resp.json(), cui=cui, env=env, now=now)
+    _log.info(
+        "oauth exchange ok cui=%s env=%s expires_at=%s", cui, env, token.expires_at.isoformat()
+    )
+    return token
 
 
 def refresh_access_token(
@@ -223,6 +232,7 @@ def refresh_access_token(
     refresh_token: str,
     now: datetime,
 ) -> Token:
+    _log.debug("oauth refresh start cui=%s env=%s", cui, env)
     resp = http.post(
         _TOKEN_URL,
         data={
@@ -246,6 +256,8 @@ def refresh_access_token(
     if resp.status_code != 200:
         snippet = resp.content[:200].decode("utf-8", "replace")
         raise AuthError(f"refresh failed (HTTP {resp.status_code}): {snippet}")
-    return _token_from_body(
+    token = _token_from_body(
         resp.json(), cui=cui, env=env, now=now, fallback_refresh_token=refresh_token
     )
+    _log.info("oauth refresh ok cui=%s expires_at=%s", cui, token.expires_at.isoformat())
+    return token

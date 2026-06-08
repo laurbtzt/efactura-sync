@@ -1,0 +1,6 @@
+1. [Swagger incarcare Factura](https://mfinante.gov.ro/static/10/eFactura/upload.html)
+2. [Swagger Obtinere Id descarcare](https://mfinante.gov.ro/static/10/eFactura/staremesaj.html#/)
+3. [Swagger descarcare Factura](https://mfinante.gov.ro/static/10/eFactura/descarcare.html)
+4. [Swagger Interogare Lista Mesaje](https://mfinante.gov.ro/static/10/eFactura/listamesaje.html#/)
+5. [Swagger Validare XML](https://mfinante.gov.ro/static/10/eFactura/validare.html#/)
+6. [Swagger XML la PDF](https://mfinante.gov.ro/static/10/eFactura/xmltopdf.html)

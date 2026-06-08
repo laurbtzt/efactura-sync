@@ -1,5 +1,7 @@
 # efactura-sync
 
+**Disclaimer** As other would say: _Designed by human, written with AI_
+
 Daily archival sync for Romanian ANAF e-Factura SPV. Read-only — pulls invoices and messages, never uploads. Files are archived locally; PDF rendering goes through ANAF's hosted `xmltopdf` service. Notifications go out as Romanian-language emails over SMTP.
 
 See the design spec at [`docs/superpowers/specs/2026-05-04-efactura-sync-design.md`](docs/superpowers/specs/2026-05-04-efactura-sync-design.md) and the implementation plan at [`docs/superpowers/plans/2026-05-04-efactura-sync.md`](docs/superpowers/plans/2026-05-04-efactura-sync.md). Path configuration is covered by [`docs/superpowers/specs/2026-06-02-env-driven-paths-design.md`](docs/superpowers/specs/2026-06-02-env-driven-paths-design.md).

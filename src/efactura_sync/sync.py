@@ -237,9 +237,7 @@ def process_one_message(
     if list_msg.tip in ("PRIMITA", "TRIMISA") and row.pdf_path is None:
         try:
             if ubl_xml is None:
-                raise RuntimeError(
-                    f"ubl_xml missing for invoice render: msg_id={list_msg.msg_id}"
-                )
+                raise RuntimeError(f"ubl_xml missing for invoice render: msg_id={list_msg.msg_id}")
             pdf_bytes = deps.renderer.render(ubl_xml=ubl_xml)
             invoice_type2: Literal["PRIMITA", "TRIMISA"] = list_msg.tip
             pdf_target = invoice_pdf_path(

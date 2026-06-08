@@ -418,9 +418,7 @@ def test_run_for_cui_uses_zile_window_from_poll_state(deps: SyncDeps, now_utc: d
     assert zile == 4  # 3 days + 1 safety overlap
 
 
-def test_run_for_cui_zile_override_forces_window(
-    deps: SyncDeps, now_utc: datetime
-) -> None:
+def test_run_for_cui_zile_override_forces_window(deps: SyncDeps, now_utc: datetime) -> None:
     # An override forces the window even when poll_state would say otherwise.
     deps.anaf = FakeAnaf(list_response=[])  # type: ignore[assignment]
     add_monitored_cui(deps.db, cui="12345678", display_name=None, now=now_utc)
@@ -634,9 +632,7 @@ def test_process_one_message_logs_steps(
 ) -> None:
     deps.anaf.download_payload = _make_zip(UBL_FIXTURE)  # type: ignore[attr-defined]
     add_monitored_cui(deps.db, cui="12345678", display_name="Acme", now=now_utc)
-    add_watched_counterparty(
-        deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc
-    )
+    add_watched_counterparty(deps.db, my_cui="12345678", counterparty_cui="RO87654321", now=now_utc)
 
     with caplog.at_level("DEBUG", logger="efactura_sync.sync"):
         process_one_message(

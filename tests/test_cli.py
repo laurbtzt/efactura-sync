@@ -661,9 +661,7 @@ def test_auth_login_no_browser_does_not_open(
     assert "https://authorize?x=1" in result.stdout  # URL is printed for copying
 
 
-def test_auth_login_browser_flag_opens(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_auth_login_browser_flag_opens(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from efactura_sync.anaf.oauth import Token
 
     browser_calls: list[str] = []
@@ -696,9 +694,7 @@ def test_auth_login_browser_flag_opens(
     assert browser_calls == ["https://authorize?x=1"]
 
 
-def test_sync_run_without_zile_passes_none(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_sync_run_without_zile_passes_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     runner.invoke(app, ["cui", "add", "12345678"])
     save_token(
         tmp_path / "tokens",

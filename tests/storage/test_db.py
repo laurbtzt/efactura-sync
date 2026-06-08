@@ -379,6 +379,4 @@ def test_add_monitored_cui_logs_debug(
     with caplog.at_level("DEBUG", logger="efactura_sync.storage.db"):
         add_monitored_cui(db, cui="123", display_name="Acme", now=datetime(2026, 6, 4, tzinfo=UTC))
 
-    assert any(
-        "monitored cui added" in r.message and "123" in r.message for r in caplog.records
-    )
+    assert any("monitored cui added" in r.message and "123" in r.message for r in caplog.records)

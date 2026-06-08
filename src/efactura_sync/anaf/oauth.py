@@ -247,7 +247,7 @@ def refresh_access_token(
     if resp.status_code == 400:
         try:
             err = (resp.json() or {}).get("error", "")
-        except (ValueError, json.JSONDecodeError):
+        except ValueError, json.JSONDecodeError:
             err = ""
         snippet = resp.content[:200].decode("utf-8", "replace")
         if err == "invalid_grant":

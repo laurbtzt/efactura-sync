@@ -64,9 +64,7 @@ class AnafClient:
             headers=self._headers(access_token),
             timeout=30.0,
         )
-        _log.debug(
-            "listaMesajeFactura -> HTTP %d (%d bytes)", resp.status_code, len(resp.content)
-        )
+        _log.debug("listaMesajeFactura -> HTTP %d (%d bytes)", resp.status_code, len(resp.content))
         _classify(resp)
         try:
             payload = resp.json()
